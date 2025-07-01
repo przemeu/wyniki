@@ -25,7 +25,7 @@ export const PLAYER_SOUNDS: Record<string, SoundType> = {
 }
 
 // Team-based default sounds
-export const TEAM_DEFAULT_SOUNDS: Record<"yellow" | "blue", SoundType> = {
+export const TEAM_DEFAULT_SOUNDS: Record<string, SoundType> = {
   yellow: "yellow-horn", // Boston Bruins horn for yellow team
   blue: "commentary", // "OOOHHH YESSS!!" commentary for blue team
 }
@@ -34,87 +34,247 @@ class SoundManager {
   private audioCache: Map<string, HTMLAudioElement> = new Map()
   private enabled = true
   private volume = 0.7
+  private loadingStatus: Map<string, "loading" | "loaded" | "error"> = new Map()
+  private errorDetails: Map<string, string> = new Map()
+  private userInteracted = false
+  private loadAttempts: Map<string, number> = new Map()
 
   constructor() {
-    // Preload all sounds
-    this.preloadSounds()
+    // Wait for user interaction before preloading sounds
+    this.setupUserInteractionListener()
+  }
+
+  private setupUserInteractionListener() {
+    const handleFirstInteraction = () => {
+      this.userInteracted = true
+      console.log("👆 User interaction detected, loading sounds...")
+      this.preloadSounds()
+      document.removeEventListener("click", handleFirstInteraction)
+      document.removeEventListener("touchstart", handleFirstInteraction)
+    }
+
+    document.addEventListener("click", handleFirstInteraction)
+    document.addEventListener("touchstart", handleFirstInteraction)
+  }
+
+  private async checkFileExists(url: string): Promise<boolean> {
+    try {
+      const response = await fetch(url, { method: "HEAD" })
+      return response.ok
+    } catch {
+      return false
+    }
   }
 
   private async preloadSounds() {
+    console.log("🎵 Starting to preload sounds...")
+
     for (const sound of AVAILABLE_SOUNDS) {
       if (sound.file) {
-        try {
-          const audio = new Audio(sound.file)
-          audio.volume = this.volume
-          audio.preload = "auto"
-          this.audioCache.set(sound.id, audio)
-        } catch (error) {
-          console.warn(`Failed to preload sound: ${sound.id}`, error)
-        }
+        await this.loadSound(sound.id, sound.file)
+      }
+    }
+  }
+
+  private async loadSound(soundId: string, filePath: string, retryCount = 0): Promise<void> {
+    const maxRetries = 2
+
+    try {
+      this.loadingStatus.set(soundId, "loading")
+      this.loadAttempts.set(soundId, (this.loadAttempts.get(soundId) || 0) + 1)
+
+      console.log(`🎵 Loading sound: ${soundId} from ${filePath} (attempt ${retryCount + 1})`)
+
+      // First check if file exists
+      const fileExists = await this.checkFileExists(filePath)
+      if (!fileExists) {
+        throw new Error(`File not found: ${filePath}`)
+      }
+
+      const audio = new Audio()
+
+      // Create a promise that resolves when audio is ready or rejects on error
+      const loadPromise = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error("Load timeout"))
+        }, 10000) // 10 second timeout
+
+        audio.addEventListener(
+          "canplaythrough",
+          () => {
+            clearTimeout(timeout)
+            console.log(`✅ Sound loaded successfully: ${soundId}`)
+            this.loadingStatus.set(soundId, "loaded")
+            resolve()
+          },
+          { once: true },
+        )
+
+        audio.addEventListener(
+          "error",
+          (e) => {
+            clearTimeout(timeout)
+            const errorMsg = `Load error: ${e.type} - ${audio.error?.message || "Unknown error"}`
+            console.error(`❌ Failed to load sound: ${soundId}`, errorMsg)
+            this.errorDetails.set(soundId, errorMsg)
+            reject(new Error(errorMsg))
+          },
+          { once: true },
+        )
+      })
+
+      audio.volume = this.volume
+      audio.preload = "auto"
+      audio.crossOrigin = "anonymous" // Handle CORS issues
+      audio.src = filePath
+
+      await loadPromise
+      this.audioCache.set(soundId, audio)
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "Unknown error"
+      console.error(`❌ Failed to load sound: ${soundId}`, errorMsg)
+      this.loadingStatus.set(soundId, "error")
+      this.errorDetails.set(soundId, errorMsg)
+
+      // Retry logic
+      if (retryCount < maxRetries) {
+        console.log(`Retrying sound load: ${soundId} (${retryCount + 1}/${maxRetries})`)
+        await new Promise((resolve) => setTimeout(resolve, 1000)) // Wait 1 second
+        return this.loadSound(soundId, filePath, retryCount + 1)
       }
     }
   }
 
   setEnabled(enabled: boolean) {
     this.enabled = enabled
-    localStorage.setItem("football-sounds-enabled", enabled.toString())
+    if (typeof window !== "undefined") {
+      localStorage.setItem("football-sounds-enabled", enabled.toString())
+    }
+    console.log(`🎵 Sounds ${enabled ? "enabled" : "disabled"}`)
   }
 
   isEnabled(): boolean {
+    if (typeof window === "undefined") return true
     const stored = localStorage.getItem("football-sounds-enabled")
     return stored !== null ? stored === "true" : true
   }
 
   setVolume(volume: number) {
     this.volume = Math.max(0, Math.min(1, volume))
-    localStorage.setItem("football-sounds-volume", this.volume.toString())
+    if (typeof window !== "undefined") {
+      localStorage.setItem("football-sounds-volume", this.volume.toString())
+    }
 
     // Update volume for all cached audio
     this.audioCache.forEach((audio) => {
       audio.volume = this.volume
     })
+
+    console.log(`🔊 Volume set to: ${Math.round(this.volume * 100)}%`)
   }
 
   getVolume(): number {
+    if (typeof window === "undefined") return 0.7
     const stored = localStorage.getItem("football-sounds-volume")
     return stored !== null ? Number.parseFloat(stored) : 0.7
   }
 
   async playGoalSound(playerName: string, team: "yellow" | "blue") {
-    if (!this.enabled) return
+    if (!this.enabled) {
+      console.log("🔇 Sounds disabled, skipping playback")
+      return
+    }
+
+    if (!this.userInteracted) {
+      console.log("⚠️ No user interaction yet, cannot play sound")
+      return
+    }
 
     try {
       // First check for player-specific sound, then team default
       const soundType = PLAYER_SOUNDS[playerName] || TEAM_DEFAULT_SOUNDS[team]
-      const audio = this.audioCache.get(soundType)
+      console.log(`🎵 Playing goal sound for ${playerName} (${team}): ${soundType}`)
 
-      if (audio) {
-        // Reset audio to beginning and play
-        audio.currentTime = 0
-        await audio.play()
+      const audio = this.audioCache.get(soundType)
+      const status = this.loadingStatus.get(soundType)
+
+      if (!audio) {
+        console.error(`❌ Audio not found for sound type: ${soundType}`)
+        return
+      }
+
+      if (status === "error") {
+        const errorDetail = this.errorDetails.get(soundType)
+        console.error(`❌ Sound failed to load: ${soundType} - ${errorDetail}`)
+        return
+      }
+
+      if (status === "loading") {
+        console.log(`⏳ Sound still loading: ${soundType}`)
+        return
+      }
+
+      // Reset audio to beginning and play
+      audio.currentTime = 0
+      const playPromise = audio.play()
+
+      if (playPromise !== undefined) {
+        await playPromise
+        console.log(`✅ Successfully played sound: ${soundType}`)
       }
     } catch (error) {
-      console.warn("Failed to play goal sound:", error)
+      console.error("❌ Failed to play goal sound:", error)
     }
   }
 
   async previewSound(soundType: SoundType) {
     if (soundType === "none") return
 
+    if (!this.userInteracted) {
+      console.log("⚠️ No user interaction yet, cannot preview sound")
+      // Try to load sounds if user is interacting now
+      this.preloadSounds()
+      return
+    }
+
     try {
+      console.log(`🎵 Previewing sound: ${soundType}`)
       const audio = this.audioCache.get(soundType)
-      if (audio) {
-        audio.currentTime = 0
-        await audio.play()
+      const status = this.loadingStatus.get(soundType)
+
+      if (!audio) {
+        console.error(`❌ Audio not found for preview: ${soundType}`)
+        return
+      }
+
+      if (status === "error") {
+        const errorDetail = this.errorDetails.get(soundType)
+        console.error(`❌ Sound failed to load: ${soundType} - ${errorDetail}`)
+        return
+      }
+
+      if (status === "loading") {
+        console.log(`⏳ Sound still loading: ${soundType}`)
+        return
+      }
+
+      audio.currentTime = 0
+      const playPromise = audio.play()
+
+      if (playPromise !== undefined) {
+        await playPromise
+        console.log(`✅ Successfully previewed sound: ${soundType}`)
       }
     } catch (error) {
-      console.warn("Failed to preview sound:", error)
+      console.error("❌ Failed to preview sound:", error)
     }
   }
 
   async stopAllSounds() {
-    this.audioCache.forEach((audio) => {
+    console.log("🛑 Stopping all sounds")
+    this.audioCache.forEach((audio, soundType) => {
       if (!audio.paused) {
+        console.log(`🛑 Stopping sound: ${soundType}`)
         audio.pause()
         audio.currentTime = 0
       }
@@ -125,6 +285,60 @@ class SoundManager {
   getPlayerSound(playerName: string, team: "yellow" | "blue"): SoundType {
     return PLAYER_SOUNDS[playerName] || TEAM_DEFAULT_SOUNDS[team]
   }
+
+  // Debug method to check sound status
+  getSoundStatus() {
+    const status: Record<string, any> = {
+      enabled: this.enabled,
+      volume: this.volume,
+      userInteracted: this.userInteracted,
+      sounds: {},
+    }
+
+    this.loadingStatus.forEach((loadStatus, soundId) => {
+      const audio = this.audioCache.get(soundId)
+      const errorDetail = this.errorDetails.get(soundId)
+      const attempts = this.loadAttempts.get(soundId) || 0
+
+      status.sounds[soundId] = {
+        loadStatus,
+        hasAudio: !!audio,
+        canPlay: audio ? audio.readyState >= 2 : false,
+        src: audio?.src || "none",
+        error: errorDetail || null,
+        attempts,
+      }
+    })
+
+    return status
+  }
+
+  // Method to force reload sounds (for debugging)
+  async forceReloadSounds() {
+    console.log("🔄 Force reloading all sounds...")
+    this.audioCache.clear()
+    this.loadingStatus.clear()
+    this.errorDetails.clear()
+    this.loadAttempts.clear()
+
+    if (this.userInteracted) {
+      await this.preloadSounds()
+    } else {
+      console.log("⚠️ Need user interaction first")
+    }
+  }
+
+  // Get loading progress
+  getLoadingProgress() {
+    const totalSounds = AVAILABLE_SOUNDS.filter((s) => s.file).length
+    const loadedSounds = Array.from(this.loadingStatus.values()).filter((status) => status === "loaded").length
+    return { loaded: loadedSounds, total: totalSounds }
+  }
 }
 
 export const soundManager = new SoundManager()
+
+// Make soundManager available globally for debugging
+if (typeof window !== "undefined") {
+  ;(window as any).soundManager = soundManager
+}
