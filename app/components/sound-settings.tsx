@@ -6,12 +6,33 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
-import { Volume2, VolumeX, Play, RefreshCw, Bug, AlertTriangle, CheckCircle, Clock } from "lucide-react"
-import { soundManager, AVAILABLE_SOUNDS, PLAYER_SOUNDS, TEAM_DEFAULT_SOUNDS, type SoundType } from "@/lib/sounds"
+import { Progress } from "@/components/ui/progress"
+import {
+  Volume2,
+  VolumeX,
+  Play,
+  RefreshCw,
+  Bug,
+  AlertTriangle,
+  CheckCircle,
+  Clock,
+  TestTube,
+  Pause,
+  X,
+} from "lucide-react"
+import { soundManager, AVAILABLE_SOUNDS, TEAM_DEFAULT_SOUNDS, type SoundType } from "@/lib/sounds"
 
 interface SoundSettingsProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+}
+
+interface TestResult {
+  soundId: string
+  name: string
+  status: "pending" | "testing" | "success" | "error"
+  error?: string
+  duration?: number
 }
 
 export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps) {
@@ -21,10 +42,34 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
   const [showDebug, setShowDebug] = useState(false)
   const [loadingProgress, setLoadingProgress] = useState({ loaded: 0, total: 0 })
 
+  // Testing states
+  const [isTestingAll, setIsTestingAll] = useState(false)
+  const [testResults, setTestResults] = useState<TestResult[]>([])
+  const [currentTestIndex, setCurrentTestIndex] = useState(-1)
+  const [testProgress, setTestProgress] = useState(0)
+
+  // Add state for managing player sound assignments
+  const [playerSoundAssignments, setPlayerSoundAssignments] = useState<Record<string, SoundType>>({})
+  const [showPlayerAssignments, setShowPlayerAssignments] = useState(false)
+  const [selectedPlayerForSound, setSelectedPlayerForSound] = useState<string | null>(null)
+
   useEffect(() => {
     if (soundManager) {
       setSoundEnabled(soundManager.isEnabled())
       setVolume(Math.round(soundManager.getVolume() * 100))
+
+      // Load player sound assignments from localStorage
+      const savedAssignments = localStorage.getItem("football-player-sounds")
+      if (savedAssignments) {
+        try {
+          const assignments = JSON.parse(savedAssignments)
+          setPlayerSoundAssignments(assignments)
+          // Update the sound manager with saved assignments
+          soundManager.updatePlayerAssignments(assignments)
+        } catch (error) {
+          console.error("Failed to load player sound assignments:", error)
+        }
+      }
 
       // Update loading progress periodically
       const interval = setInterval(() => {
@@ -34,6 +79,67 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
       return () => clearInterval(interval)
     }
   }, [])
+
+  // Add function to save player assignments
+  const savePlayerAssignments = (assignments: Record<string, SoundType>) => {
+    setPlayerSoundAssignments(assignments)
+    localStorage.setItem("football-player-sounds", JSON.stringify(assignments))
+    soundManager?.updatePlayerAssignments(assignments)
+  }
+
+  // Add function to assign sound to player
+  const assignSoundToPlayer = (playerName: string, soundType: SoundType) => {
+    const newAssignments = { ...playerSoundAssignments }
+    if (soundType === "none") {
+      delete newAssignments[playerName]
+    } else {
+      newAssignments[playerName] = soundType
+    }
+    savePlayerAssignments(newAssignments)
+    setSelectedPlayerForSound(null)
+  }
+
+  // Add function to get all unique player names from the app
+  const getAllPlayerNames = (): string[] => {
+    // This will be populated from the main app - for now return common names
+    const commonPlayers = [
+      "Adam S.",
+      "Adam T.",
+      "Andrzej T.",
+      "Bartek D.",
+      "Franek W.",
+      "Grzegorz G.",
+      "Grzegorz O.",
+      "Jakub K.",
+      "Jędrek K.",
+      "Kamil E.",
+      "Konrad L.",
+      "Kornel O.",
+      "Krystian G.",
+      "Łukasz B.",
+      "Łukasz J.",
+      "Maciej M.",
+      "Marcin P.",
+      "Marek Z.",
+      "Mateusz W.",
+      "Michał G.",
+      "Michał T.",
+      "Mikołaj T.",
+      "Oskar B.",
+      "Paweł L.",
+      "Paweł W.",
+      "Piotrek P.",
+      "Przemek W.",
+      "Radek K.",
+      "Radek P.",
+      "Robert G.",
+      "Szymon B.",
+      "Tomasz Ł.",
+      "Tomek Ł.",
+      "Tomek W.",
+    ]
+    return commonPlayers.sort()
+  }
 
   const handleSoundToggle = (enabled: boolean) => {
     setSoundEnabled(enabled)
@@ -68,6 +174,85 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
     }
   }
 
+  const handleTestAllSounds = async () => {
+    if (!soundManager || isTestingAll) return
+
+    setIsTestingAll(true)
+    setCurrentTestIndex(-1)
+    setTestProgress(0)
+
+    const soundsToTest = AVAILABLE_SOUNDS.filter((sound) => sound.id !== "none")
+    const results: TestResult[] = soundsToTest.map((sound) => ({
+      soundId: sound.id,
+      name: sound.name,
+      status: "pending",
+    }))
+
+    setTestResults(results)
+
+    console.log("🧪 Starting comprehensive sound test...")
+
+    for (let i = 0; i < soundsToTest.length; i++) {
+      const sound = soundsToTest[i]
+      setCurrentTestIndex(i)
+      setTestProgress(((i + 1) / soundsToTest.length) * 100)
+
+      console.log(`🧪 Testing sound ${i + 1}/${soundsToTest.length}: ${sound.name}`)
+
+      // Update status to testing
+      setTestResults((prev) => prev.map((result, index) => (index === i ? { ...result, status: "testing" } : result)))
+
+      try {
+        const startTime = Date.now()
+
+        // Test the sound
+        await soundManager.previewSound(sound.id)
+
+        const duration = Date.now() - startTime
+
+        // Wait a bit to hear the sound
+        await new Promise((resolve) => setTimeout(resolve, 1500))
+
+        // Update status to success
+        setTestResults((prev) =>
+          prev.map((result, index) => (index === i ? { ...result, status: "success", duration } : result)),
+        )
+
+        console.log(`✅ Sound test passed: ${sound.name} (${duration}ms)`)
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : "Unknown error"
+
+        // Update status to error
+        setTestResults((prev) =>
+          prev.map((result, index) => (index === i ? { ...result, status: "error", error: errorMsg } : result)),
+        )
+
+        console.error(`❌ Sound test failed: ${sound.name}`, errorMsg)
+      }
+
+      // Small delay between tests
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+
+    setCurrentTestIndex(-1)
+    setIsTestingAll(false)
+
+    // Generate test summary
+    const successCount = results.filter((r) => r.status === "success").length
+    const errorCount = results.filter((r) => r.status === "error").length
+
+    console.log(`🧪 Sound test completed: ${successCount} passed, ${errorCount} failed`)
+
+    // Update debug info after test
+    handleDebugInfo()
+  }
+
+  const handleStopTesting = () => {
+    setIsTestingAll(false)
+    setCurrentTestIndex(-1)
+    soundManager?.stopAllSounds()
+  }
+
   const getSoundStatusIcon = (soundInfo: any) => {
     if (!soundInfo) return <Clock className="w-3 h-3 text-gray-400" />
 
@@ -79,6 +264,19 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
       case "loading":
         return <Clock className="w-3 h-3 text-yellow-500" />
       default:
+        return <Clock className="w-3 h-3 text-gray-400" />
+    }
+  }
+
+  const getTestStatusIcon = (status: TestResult["status"]) => {
+    switch (status) {
+      case "success":
+        return <CheckCircle className="w-3 h-3 text-green-500" />
+      case "error":
+        return <AlertTriangle className="w-3 h-3 text-red-500" />
+      case "testing":
+        return <Clock className="w-3 h-3 text-blue-500 animate-spin" />
+      case "pending":
         return <Clock className="w-3 h-3 text-gray-400" />
     }
   }
@@ -160,6 +358,82 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
             </CardContent>
           </Card>
 
+          {/* Sound Testing Section */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <TestTube className="w-4 h-4" />
+                Test Wszystkich Dźwięków
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleTestAllSounds}
+                  disabled={!soundEnabled || isTestingAll}
+                  className="text-xs bg-transparent"
+                >
+                  <TestTube className="w-3 h-3 mr-1" />
+                  {isTestingAll ? "Testowanie..." : "Testuj Wszystkie"}
+                </Button>
+
+                {isTestingAll && (
+                  <Button size="sm" variant="outline" onClick={handleStopTesting} className="text-xs bg-transparent">
+                    <Pause className="w-3 h-3 mr-1" />
+                    Zatrzymaj
+                  </Button>
+                )}
+              </div>
+
+              {isTestingAll && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span>Postęp testu:</span>
+                    <span>{Math.round(testProgress)}%</span>
+                  </div>
+                  <Progress value={testProgress} className="h-2" />
+                  {currentTestIndex >= 0 && (
+                    <p className="text-xs text-gray-600">Testowanie: {AVAILABLE_SOUNDS[currentTestIndex]?.name}</p>
+                  )}
+                </div>
+              )}
+
+              {testResults.length > 0 && (
+                <div className="space-y-2 max-h-40 overflow-y-auto">
+                  <h4 className="text-sm font-medium">Wyniki testów:</h4>
+                  {testResults.map((result, index) => (
+                    <div
+                      key={result.soundId}
+                      className="flex items-center justify-between p-2 bg-gray-50 rounded text-sm"
+                    >
+                      <div className="flex items-center gap-2">
+                        {getTestStatusIcon(result.status)}
+                        <span className="font-medium">{result.name}</span>
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {result.status === "success" && result.duration && `${result.duration}ms`}
+                        {result.status === "error" && "❌"}
+                        {result.status === "testing" && "🧪"}
+                        {result.status === "pending" && "⏳"}
+                      </div>
+                    </div>
+                  ))}
+
+                  {!isTestingAll && testResults.length > 0 && (
+                    <div className="mt-3 p-2 bg-blue-50 rounded text-sm">
+                      <div className="font-medium">Podsumowanie:</div>
+                      <div>✅ Udane: {testResults.filter((r) => r.status === "success").length}</div>
+                      <div>❌ Błędy: {testResults.filter((r) => r.status === "error").length}</div>
+                      <div>⏳ Oczekujące: {testResults.filter((r) => r.status === "pending").length}</div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           {/* Debug Section */}
           <Card>
             <CardHeader className="pb-3">
@@ -178,20 +452,6 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
                   <RefreshCw className="w-3 h-3 mr-1" />
                   Przeładuj Dźwięki
                 </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    AVAILABLE_SOUNDS.filter((s) => s.files.length > 0).forEach((sound) => {
-                      setTimeout(() => handlePreviewSound(sound.id), Math.random() * 2000)
-                    })
-                  }}
-                  className="text-xs bg-transparent"
-                  disabled={!soundEnabled}
-                >
-                  <Play className="w-3 h-3 mr-1" />
-                  Test Wszystkich
-                </Button>
               </div>
 
               {showDebug && debugInfo && (
@@ -201,6 +461,10 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
                   <div>Głośność: {Math.round(debugInfo.volume * 100)}%</div>
                   <div>Interakcja użytkownika: {debugInfo.userInteracted ? "✅" : "❌"}</div>
                   <div>Środowisko: {debugInfo.isClient ? "Przeglądarka ✅" : "Serwer ❌"}</div>
+                  <div>Fallback: {debugInfo.hasFallback ? "✅" : "❌"}</div>
+                  {debugInfo.fallbackSrc && debugInfo.fallbackSrc !== "none" && (
+                    <div>Fallback źródło: {debugInfo.fallbackSrc.split("/").pop()}</div>
+                  )}
 
                   {debugInfo.audioSupport && (
                     <>
@@ -294,11 +558,20 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
               <div className="space-y-2">
                 {AVAILABLE_SOUNDS.filter((sound) => sound.id !== "none").map((sound) => {
                   const soundInfo = debugInfo?.sounds?.[sound.id]
+                  const testResult = testResults.find((r) => r.soundId === sound.id)
+
                   return (
                     <div key={sound.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
                       <div className="flex items-center gap-2">
                         {getSoundStatusIcon(soundInfo)}
                         <span className="text-sm font-medium">{sound.name}</span>
+                        {testResult && (
+                          <div className="flex items-center gap-1">
+                            {getTestStatusIcon(testResult.status)}
+                            {testResult.status === "success" && <span className="text-xs text-green-600">✓</span>}
+                            {testResult.status === "error" && <span className="text-xs text-red-600">✗</span>}
+                          </div>
+                        )}
                       </div>
                       <Button
                         size="sm"
@@ -317,39 +590,151 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
             </CardContent>
           </Card>
 
-          {/* Player Sound Assignments */}
+          {/* Player Sound Assignments - NEW INTERACTIVE VERSION */}
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Specjalne Przypisania Graczy</CardTitle>
+              <CardTitle className="text-base flex items-center justify-between">
+                <span>Przypisania Dźwięków Graczy</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowPlayerAssignments(!showPlayerAssignments)}
+                  className="text-xs"
+                >
+                  {showPlayerAssignments ? "Ukryj" : "Zarządzaj"}
+                </Button>
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-2 max-h-40 overflow-y-auto">
-                {Object.entries(PLAYER_SOUNDS).map(([playerName, soundType]) => {
-                  const sound = AVAILABLE_SOUNDS.find((s) => s.id === soundType)
-                  const soundInfo = debugInfo?.sounds?.[soundType]
-                  return (
-                    <div key={playerName} className="flex items-center justify-between p-2 bg-gray-50 rounded text-sm">
-                      <div className="flex items-center gap-2">
-                        {getSoundStatusIcon(soundInfo)}
-                        <span className="font-medium">{playerName}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-gray-600">{sound?.name}</span>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handlePreviewSound(soundType)}
-                          disabled={!soundEnabled}
-                          className="text-xs px-1 py-0.5"
-                        >
-                          <Play className="w-2.5 h-2.5" />
-                        </Button>
-                      </div>
+              {showPlayerAssignments ? (
+                <div className="space-y-4">
+                  {/* Add New Assignment */}
+                  <div className="p-3 bg-green-50 rounded border">
+                    <h4 className="text-sm font-medium mb-2">Dodaj Przypisanie</h4>
+                    <div className="space-y-2">
+                      <select
+                        value={selectedPlayerForSound || ""}
+                        onChange={(e) => setSelectedPlayerForSound(e.target.value || null)}
+                        className="w-full p-2 border rounded text-sm"
+                      >
+                        <option value="">Wybierz gracza...</option>
+                        {getAllPlayerNames()
+                          .filter((name) => !playerSoundAssignments[name])
+                          .map((name) => (
+                            <option key={name} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                      </select>
+
+                      {selectedPlayerForSound && (
+                        <div className="flex gap-2 flex-wrap">
+                          {AVAILABLE_SOUNDS.map((sound) => (
+                            <Button
+                              key={sound.id}
+                              size="sm"
+                              variant="outline"
+                              onClick={() => assignSoundToPlayer(selectedPlayerForSound, sound.id)}
+                              className="text-xs"
+                            >
+                              {sound.name}
+                            </Button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  )
-                })}
-              </div>
-              <p className="text-xs text-gray-500 mt-3">Pozostali gracze używają domyślnych dźwięków swoich drużyn</p>
+                  </div>
+
+                  {/* Current Assignments */}
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                    <h4 className="text-sm font-medium">Aktualne Przypisania:</h4>
+                    {Object.keys(playerSoundAssignments).length === 0 ? (
+                      <p className="text-sm text-gray-500 italic">Brak specjalnych przypisań</p>
+                    ) : (
+                      Object.entries(playerSoundAssignments).map(([playerName, soundType]) => {
+                        const sound = AVAILABLE_SOUNDS.find((s) => s.id === soundType)
+                        const soundInfo = debugInfo?.sounds?.[soundType]
+                        const testResult = testResults.find((r) => r.soundId === soundType)
+
+                        return (
+                          <div
+                            key={playerName}
+                            className="flex items-center justify-between p-2 bg-gray-50 rounded text-sm"
+                          >
+                            <div className="flex items-center gap-2">
+                              {getSoundStatusIcon(soundInfo)}
+                              <span className="font-medium">{playerName}</span>
+                              {testResult && getTestStatusIcon(testResult.status)}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-600">{sound?.name}</span>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handlePreviewSound(soundType)}
+                                disabled={!soundEnabled}
+                                className="text-xs px-1 py-0.5"
+                              >
+                                <Play className="w-2.5 h-2.5" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => assignSoundToPlayer(playerName, "none")}
+                                className="text-xs px-1 py-0.5 text-red-600 hover:text-red-700"
+                              >
+                                <X className="w-2.5 h-2.5" />
+                              </Button>
+                            </div>
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+
+                  {/* Clear All Button */}
+                  {Object.keys(playerSoundAssignments).length > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => savePlayerAssignments({})}
+                      className="text-xs text-red-600 hover:text-red-700"
+                    >
+                      <X className="w-3 h-3 mr-1" />
+                      Wyczyść Wszystkie
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {Object.keys(playerSoundAssignments).length === 0 ? (
+                    <p className="text-sm text-gray-500">
+                      Brak specjalnych przypisań. Wszyscy gracze używają domyślnych dźwięków swoich drużyn.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="text-sm text-gray-600 mb-2">
+                        Specjalne przypisania ({Object.keys(playerSoundAssignments).length}):
+                      </p>
+                      {Object.entries(playerSoundAssignments)
+                        .slice(0, 3)
+                        .map(([playerName, soundType]) => {
+                          const sound = AVAILABLE_SOUNDS.find((s) => s.id === soundType)
+                          return (
+                            <div key={playerName} className="text-xs text-gray-600">
+                              • {playerName} → {sound?.name}
+                            </div>
+                          )
+                        })}
+                      {Object.keys(playerSoundAssignments).length > 3 && (
+                        <div className="text-xs text-gray-500">
+                          ...i {Object.keys(playerSoundAssignments).length - 3} więcej
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
 

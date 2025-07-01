@@ -1,37 +1,21 @@
 // Sound management utilities
-export type SoundType = "default" | "commentary" | "whistle" | "cheer" | "horn" | "bell" | "yellow-horn" | "none"
+export type SoundType = "commentary" | "horn" | "none"
 
 export const AVAILABLE_SOUNDS: { id: SoundType; name: string; files: string[] }[] = [
   { id: "none", name: "Brak dźwięku", files: [] },
-  { id: "commentary", name: "Komentarz", files: ["/sounds/goal-commentary.mp3", "/sounds/goal-commentary.ogg"] },
-  {
-    id: "yellow-horn",
-    name: "Klakson Żółtych",
-    files: ["/sounds/goal-yellow-horn.mp3", "/sounds/goal-yellow-horn.ogg"],
-  },
-  { id: "default", name: "Domyślny", files: ["/sounds/goal-default.mp3", "/sounds/goal-default.ogg"] },
-  { id: "whistle", name: "Gwizdek", files: ["/sounds/goal-whistle.mp3", "/sounds/goal-whistle.ogg"] },
-  { id: "cheer", name: "Okrzyki", files: ["/sounds/goal-cheer.mp3", "/sounds/goal-cheer.ogg"] },
-  { id: "horn", name: "Klakson", files: ["/sounds/goal-horn.mp3", "/sounds/goal-horn.ogg"] },
-  { id: "bell", name: "Dzwon", files: ["/sounds/goal-bell.mp3", "/sounds/goal-bell.ogg"] },
+  { id: "commentary", name: "Komentarz", files: ["/sounds/goal-commentary.mp3"] },
+  { id: "horn", name: "Żółci Klakson", files: ["/sounds/goal-horn.mp3"] },
 ]
 
-// Player-specific sound mappings (can be expanded)
+// Clear all player-specific sound mappings - now empty by default
 export const PLAYER_SOUNDS: Record<string, SoundType> = {
-  "Łukasz J.": "commentary",
-  "Maciej M.": "horn",
-  "Tomek W.": "whistle",
-  "Grzegorz O.": "bell",
-  "Krystian G.": "commentary",
-  "Adam S.": "commentary",
-  "Michał G.": "cheer",
-  // Add more players as needed
+  // Players can now be assigned sounds through the app interface
 }
 
 // Team-based default sounds
 export const TEAM_DEFAULT_SOUNDS: Record<string, SoundType> = {
-  yellow: "yellow-horn", // Boston Bruins horn for yellow team
-  blue: "commentary", // "OOOHHH YESSS!!" commentary for blue team
+  yellow: "horn", // Żółci Klakson for yellow team
+  blue: "commentary", // Komentarz for blue team
 }
 
 class SoundManager {
@@ -43,6 +27,9 @@ class SoundManager {
   private userInteracted = false
   private loadAttempts: Map<string, number> = new Map()
   private isClient = false
+  private fallbackSound: HTMLAudioElement | null = null
+  // Add private property to store player assignments
+  private playerAssignments: Record<string, SoundType> = {}
 
   constructor() {
     // Only run client-side code when in browser
@@ -78,7 +65,7 @@ class SoundManager {
 
     try {
       const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 5000) // 5 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), 8000) // 8 second timeout
 
       const response = await fetch(url, {
         method: "HEAD",
@@ -87,9 +74,11 @@ class SoundManager {
       })
 
       clearTimeout(timeoutId)
-      return response.ok && response.status === 200
+      const exists = response.ok && response.status === 200
+      console.log(`🔍 File check for ${url}: ${exists ? "✅ EXISTS" : "❌ NOT FOUND"} (status: ${response.status})`)
+      return exists
     } catch (error) {
-      console.warn(`File check failed for ${url}:`, error)
+      console.warn(`❌ File check failed for ${url}:`, error)
       return false
     }
   }
@@ -99,6 +88,9 @@ class SoundManager {
 
     console.log("🎵 Starting to preload sounds...")
 
+    // First, try to load a fallback sound
+    await this.loadFallbackSound()
+
     for (const sound of AVAILABLE_SOUNDS) {
       if (sound.files.length > 0) {
         await this.loadSound(sound.id, sound.files)
@@ -106,16 +98,79 @@ class SoundManager {
     }
   }
 
+  private async loadFallbackSound() {
+    try {
+      console.log("🎵 Loading fallback sound...")
+      const fallbackFiles = ["/sounds/goal-commentary.mp3", "/sounds/goal-horn.mp3"]
+
+      for (const filePath of fallbackFiles) {
+        console.log(`🔍 Trying fallback: ${filePath}`)
+        const fileExists = await this.checkFileExists(filePath)
+        if (fileExists) {
+          const audio = new Audio()
+          audio.volume = this.volume
+          audio.crossOrigin = "anonymous"
+          audio.src = filePath
+
+          try {
+            await new Promise<void>((resolve, reject) => {
+              const timeout = setTimeout(() => reject(new Error("Timeout")), 15000)
+
+              const cleanup = () => {
+                clearTimeout(timeout)
+                audio.removeEventListener("canplaythrough", onLoad)
+                audio.removeEventListener("loadeddata", onLoadedData)
+                audio.removeEventListener("error", onError)
+              }
+
+              const onLoad = () => {
+                cleanup()
+                resolve()
+              }
+
+              const onLoadedData = () => {
+                if (audio.readyState >= 2) {
+                  cleanup()
+                  resolve()
+                }
+              }
+
+              const onError = (e: Event) => {
+                cleanup()
+                console.error(`Fallback load error for ${filePath}:`, e)
+                reject(new Error("Load failed"))
+              }
+
+              audio.addEventListener("canplaythrough", onLoad, { once: true })
+              audio.addEventListener("loadeddata", onLoadedData, { once: true })
+              audio.addEventListener("error", onError, { once: true })
+
+              audio.load()
+            })
+
+            this.fallbackSound = audio
+            console.log(`✅ Fallback sound loaded: ${filePath}`)
+            break
+          } catch (error) {
+            console.warn(`Failed to load fallback sound ${filePath}:`, error)
+          }
+        }
+      }
+    } catch (error) {
+      console.warn("Failed to load any fallback sound:", error)
+    }
+  }
+
   private async loadSound(soundId: string, filePaths: string[], retryCount = 0): Promise<void> {
     if (!this.isClient || filePaths.length === 0) return
 
-    const maxRetries = 2
+    const maxRetries = 3
 
     try {
       this.loadingStatus.set(soundId, "loading")
       this.loadAttempts.set(soundId, (this.loadAttempts.get(soundId) || 0) + 1)
 
-      console.log(`🎵 Loading sound: ${soundId} (attempt ${retryCount + 1})`)
+      console.log(`🎵 Loading sound: ${soundId} (attempt ${retryCount + 1}/${maxRetries + 1})`)
 
       // Try each file format until one works
       let workingFilePath: string | null = null
@@ -128,6 +183,8 @@ class SoundManager {
           // Test if browser can play this format
           const audio = new Audio()
           const canPlay = audio.canPlayType(this.getMimeType(filePath))
+
+          console.log(`🎵 Browser support for ${filePath}: "${canPlay}"`)
 
           if (canPlay !== "") {
             workingFilePath = filePath
@@ -142,7 +199,7 @@ class SoundManager {
       }
 
       if (!workingFilePath) {
-        throw new Error(`No playable audio format found for ${soundId}`)
+        throw new Error(`No playable audio format found for ${soundId}. Checked files: ${filePaths.join(", ")}`)
       }
 
       const audio = new Audio()
@@ -150,19 +207,29 @@ class SoundManager {
       // Create a promise that resolves when audio is ready or rejects on error
       const loadPromise = new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
-          reject(new Error("Load timeout (15s)"))
-        }, 15000) // 15 second timeout
+          reject(new Error("Load timeout (20s)"))
+        }, 20000) // 20 second timeout
 
         const cleanup = () => {
           clearTimeout(timeout)
           audio.removeEventListener("canplaythrough", onLoad)
           audio.removeEventListener("error", onError)
           audio.removeEventListener("loadeddata", onLoadedData)
+          audio.removeEventListener("loadstart", onLoadStart)
+          audio.removeEventListener("progress", onProgress)
+        }
+
+        const onLoadStart = () => {
+          console.log(`📥 Started loading: ${soundId}`)
+        }
+
+        const onProgress = () => {
+          console.log(`📊 Loading progress: ${soundId} (readyState: ${audio.readyState})`)
         }
 
         const onLoad = () => {
           cleanup()
-          console.log(`✅ Sound loaded successfully: ${soundId}`)
+          console.log(`✅ Sound loaded successfully: ${soundId} (duration: ${audio.duration}s)`)
           this.loadingStatus.set(soundId, "loaded")
           resolve()
         }
@@ -171,7 +238,7 @@ class SoundManager {
           // Fallback if canplaythrough doesn't fire
           if (audio.readyState >= 2) {
             cleanup()
-            console.log(`✅ Sound loaded (via loadeddata): ${soundId}`)
+            console.log(`✅ Sound loaded (via loadeddata): ${soundId} (readyState: ${audio.readyState})`)
             this.loadingStatus.set(soundId, "loaded")
             resolve()
           }
@@ -185,6 +252,8 @@ class SoundManager {
           reject(new Error(errorMsg))
         }
 
+        audio.addEventListener("loadstart", onLoadStart, { once: true })
+        audio.addEventListener("progress", onProgress)
         audio.addEventListener("canplaythrough", onLoad, { once: true })
         audio.addEventListener("loadeddata", onLoadedData, { once: true })
         audio.addEventListener("error", onError, { once: true })
@@ -195,22 +264,35 @@ class SoundManager {
       audio.preload = "auto"
       audio.crossOrigin = "anonymous"
 
+      console.log(`🎵 Setting source for ${soundId}: ${workingFilePath}`)
+
       // Set source and start loading
       audio.src = workingFilePath
       audio.load() // Explicitly trigger load
 
       await loadPromise
       this.audioCache.set(soundId, audio)
+      console.log(`🎵 Successfully cached sound: ${soundId}`)
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : "Unknown error"
       console.error(`❌ Failed to load sound: ${soundId}`, errorMsg)
       this.loadingStatus.set(soundId, "error")
       this.errorDetails.set(soundId, errorMsg)
 
+      // Try to use fallback for failed sounds
+      if (this.fallbackSound && soundId !== "commentary") {
+        console.log(`🔄 Using fallback sound for: ${soundId}`)
+        const fallbackAudio = this.fallbackSound.cloneNode() as HTMLAudioElement
+        fallbackAudio.volume = this.volume
+        this.audioCache.set(soundId, fallbackAudio)
+        this.loadingStatus.set(soundId, "loaded")
+        return
+      }
+
       // Retry logic
       if (retryCount < maxRetries) {
         console.log(`🔄 Retrying sound load: ${soundId} (${retryCount + 1}/${maxRetries})`)
-        await new Promise((resolve) => setTimeout(resolve, 2000)) // Wait 2 seconds
+        await new Promise((resolve) => setTimeout(resolve, 3000)) // Wait 3 seconds
         return this.loadSound(soundId, filePaths, retryCount + 1)
       }
     }
@@ -241,6 +323,11 @@ class SoundManager {
       audio.volume = this.volume
     })
 
+    // Update fallback sound volume
+    if (this.fallbackSound) {
+      this.fallbackSound.volume = this.volume
+    }
+
     console.log(`🔊 Volume set to: ${Math.round(this.volume * 100)}%`)
   }
 
@@ -250,6 +337,19 @@ class SoundManager {
     return stored !== null ? Number.parseFloat(stored) : 0.7
   }
 
+  // Add method to update player assignments in the SoundManager class
+  updatePlayerAssignments(assignments: Record<string, SoundType>) {
+    // Store the assignments for use in sound selection
+    this.playerAssignments = assignments
+    console.log("🎵 Updated player sound assignments:", assignments)
+  }
+
+  // Update the getPlayerSound method to use dynamic assignments
+  getPlayerSound(playerName: string, team: "yellow" | "blue"): SoundType {
+    return this.playerAssignments[playerName] || TEAM_DEFAULT_SOUNDS[team]
+  }
+
+  // Update playGoalSound method to use dynamic assignments
   async playGoalSound(playerName: string, team: "yellow" | "blue") {
     if (!this.isClient || !this.enabled) {
       console.log("🔇 Sounds disabled or not in browser, skipping playback")
@@ -262,8 +362,8 @@ class SoundManager {
     }
 
     try {
-      // First check for player-specific sound, then team default
-      const soundType = PLAYER_SOUNDS[playerName] || TEAM_DEFAULT_SOUNDS[team]
+      // Use dynamic assignments instead of static PLAYER_SOUNDS
+      const soundType = this.playerAssignments[playerName] || TEAM_DEFAULT_SOUNDS[team]
       console.log(`🎵 Playing goal sound for ${playerName} (${team}): ${soundType}`)
 
       const audio = this.audioCache.get(soundType)
@@ -271,12 +371,24 @@ class SoundManager {
 
       if (!audio) {
         console.error(`❌ Audio not found for sound type: ${soundType}`)
+        // Try fallback sound
+        if (this.fallbackSound) {
+          console.log("🔄 Using fallback sound")
+          this.fallbackSound.currentTime = 0
+          await this.fallbackSound.play()
+        }
         return
       }
 
       if (status === "error") {
         const errorDetail = this.errorDetails.get(soundType)
         console.error(`❌ Sound failed to load: ${soundType} - ${errorDetail}`)
+        // Try fallback sound
+        if (this.fallbackSound) {
+          console.log("🔄 Using fallback sound due to error")
+          this.fallbackSound.currentTime = 0
+          await this.fallbackSound.play()
+        }
         return
       }
 
@@ -295,6 +407,16 @@ class SoundManager {
       }
     } catch (error) {
       console.error("❌ Failed to play goal sound:", error)
+      // Try fallback sound as last resort
+      if (this.fallbackSound) {
+        try {
+          console.log("🔄 Using fallback sound as last resort")
+          this.fallbackSound.currentTime = 0
+          await this.fallbackSound.play()
+        } catch (fallbackError) {
+          console.error("❌ Even fallback sound failed:", fallbackError)
+        }
+      }
     }
   }
 
@@ -315,12 +437,24 @@ class SoundManager {
 
       if (!audio) {
         console.error(`❌ Audio not found for preview: ${soundType}`)
+        // Try fallback sound
+        if (this.fallbackSound) {
+          console.log("🔄 Using fallback sound for preview")
+          this.fallbackSound.currentTime = 0
+          await this.fallbackSound.play()
+        }
         return
       }
 
       if (status === "error") {
         const errorDetail = this.errorDetails.get(soundType)
         console.error(`❌ Sound failed to load: ${soundType} - ${errorDetail}`)
+        // Try fallback sound
+        if (this.fallbackSound) {
+          console.log("🔄 Using fallback sound for preview due to error")
+          this.fallbackSound.currentTime = 0
+          await this.fallbackSound.play()
+        }
         return
       }
 
@@ -352,11 +486,13 @@ class SoundManager {
         audio.currentTime = 0
       }
     })
-  }
 
-  // Helper method to get the sound that would play for a player
-  getPlayerSound(playerName: string, team: "yellow" | "blue"): SoundType {
-    return PLAYER_SOUNDS[playerName] || TEAM_DEFAULT_SOUNDS[team]
+    // Also stop fallback sound
+    if (this.fallbackSound && !this.fallbackSound.paused) {
+      console.log("🛑 Stopping fallback sound")
+      this.fallbackSound.pause()
+      this.fallbackSound.currentTime = 0
+    }
   }
 
   private getMimeType(filePath: string): string {
@@ -394,6 +530,8 @@ class SoundManager {
       volume: this.volume,
       userInteracted: this.userInteracted,
       isClient: this.isClient,
+      hasFallback: !!this.fallbackSound,
+      fallbackSrc: this.fallbackSound?.src || "none",
       audioSupport: this.getAudioSupport(),
       sounds: {},
     }
@@ -427,6 +565,7 @@ class SoundManager {
     this.loadingStatus.clear()
     this.errorDetails.clear()
     this.loadAttempts.clear()
+    this.fallbackSound = null
 
     if (this.userInteracted) {
       await this.preloadSounds()
@@ -437,7 +576,7 @@ class SoundManager {
 
   // Get loading progress
   getLoadingProgress() {
-    const totalSounds = AVAILABLE_SOUNDS.filter((s) => s.files).length
+    const totalSounds = AVAILABLE_SOUNDS.filter((s) => s.files.length > 0).length
     const loadedSounds = Array.from(this.loadingStatus.values()).filter((status) => status === "loaded").length
     return { loaded: loadedSounds, total: totalSounds }
   }
