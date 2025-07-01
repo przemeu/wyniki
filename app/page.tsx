@@ -140,7 +140,7 @@ export default function FootballScorer() {
 
     // Play goal sound immediately when goal is scored
     try {
-      soundManager.playGoalSound(playerName, team)
+      soundManager?.playGoalSound(playerName, team)
     } catch (error) {
       console.warn("Failed to play goal sound:", error)
     }
@@ -600,7 +600,7 @@ export default function FootballScorer() {
               </Button>
               <Button
                 variant="outline"
-                onClick={() => soundManager.stopAllSounds()}
+                onClick={() => soundManager?.stopAllSounds()}
                 size="sm"
                 className="text-xs sm:text-sm px-2 sm:px-3"
               >

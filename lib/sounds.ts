@@ -38,13 +38,25 @@ class SoundManager {
   private errorDetails: Map<string, string> = new Map()
   private userInteracted = false
   private loadAttempts: Map<string, number> = new Map()
+  private isClient = false
 
   constructor() {
-    // Wait for user interaction before preloading sounds
-    this.setupUserInteractionListener()
+    // Only run client-side code when in browser
+    this.isClient = typeof window !== "undefined"
+
+    if (this.isClient) {
+      // Initialize client-side settings
+      this.enabled = this.isEnabled()
+      this.volume = this.getVolume()
+
+      // Wait for user interaction before preloading sounds
+      this.setupUserInteractionListener()
+    }
   }
 
   private setupUserInteractionListener() {
+    if (!this.isClient) return
+
     const handleFirstInteraction = () => {
       this.userInteracted = true
       console.log("👆 User interaction detected, loading sounds...")
@@ -58,6 +70,8 @@ class SoundManager {
   }
 
   private async checkFileExists(url: string): Promise<boolean> {
+    if (!this.isClient) return false
+
     try {
       const response = await fetch(url, { method: "HEAD" })
       return response.ok
@@ -67,6 +81,8 @@ class SoundManager {
   }
 
   private async preloadSounds() {
+    if (!this.isClient) return
+
     console.log("🎵 Starting to preload sounds...")
 
     for (const sound of AVAILABLE_SOUNDS) {
@@ -77,6 +93,8 @@ class SoundManager {
   }
 
   private async loadSound(soundId: string, filePath: string, retryCount = 0): Promise<void> {
+    if (!this.isClient) return
+
     const maxRetries = 2
 
     try {
@@ -147,21 +165,21 @@ class SoundManager {
 
   setEnabled(enabled: boolean) {
     this.enabled = enabled
-    if (typeof window !== "undefined") {
+    if (this.isClient) {
       localStorage.setItem("football-sounds-enabled", enabled.toString())
     }
     console.log(`🎵 Sounds ${enabled ? "enabled" : "disabled"}`)
   }
 
   isEnabled(): boolean {
-    if (typeof window === "undefined") return true
+    if (!this.isClient) return true
     const stored = localStorage.getItem("football-sounds-enabled")
     return stored !== null ? stored === "true" : true
   }
 
   setVolume(volume: number) {
     this.volume = Math.max(0, Math.min(1, volume))
-    if (typeof window !== "undefined") {
+    if (this.isClient) {
       localStorage.setItem("football-sounds-volume", this.volume.toString())
     }
 
@@ -174,14 +192,14 @@ class SoundManager {
   }
 
   getVolume(): number {
-    if (typeof window === "undefined") return 0.7
+    if (!this.isClient) return 0.7
     const stored = localStorage.getItem("football-sounds-volume")
     return stored !== null ? Number.parseFloat(stored) : 0.7
   }
 
   async playGoalSound(playerName: string, team: "yellow" | "blue") {
-    if (!this.enabled) {
-      console.log("🔇 Sounds disabled, skipping playback")
+    if (!this.isClient || !this.enabled) {
+      console.log("🔇 Sounds disabled or not in browser, skipping playback")
       return
     }
 
@@ -228,7 +246,7 @@ class SoundManager {
   }
 
   async previewSound(soundType: SoundType) {
-    if (soundType === "none") return
+    if (!this.isClient || soundType === "none") return
 
     if (!this.userInteracted) {
       console.log("⚠️ No user interaction yet, cannot preview sound")
@@ -271,6 +289,8 @@ class SoundManager {
   }
 
   async stopAllSounds() {
+    if (!this.isClient) return
+
     console.log("🛑 Stopping all sounds")
     this.audioCache.forEach((audio, soundType) => {
       if (!audio.paused) {
@@ -292,6 +312,7 @@ class SoundManager {
       enabled: this.enabled,
       volume: this.volume,
       userInteracted: this.userInteracted,
+      isClient: this.isClient,
       sounds: {},
     }
 
@@ -315,6 +336,8 @@ class SoundManager {
 
   // Method to force reload sounds (for debugging)
   async forceReloadSounds() {
+    if (!this.isClient) return
+
     console.log("🔄 Force reloading all sounds...")
     this.audioCache.clear()
     this.loadingStatus.clear()
@@ -336,9 +359,10 @@ class SoundManager {
   }
 }
 
-export const soundManager = new SoundManager()
+// Create sound manager instance only on client side
+export const soundManager = typeof window !== "undefined" ? new SoundManager() : null
 
-// Make soundManager available globally for debugging
-if (typeof window !== "undefined") {
+// Make soundManager available globally for debugging (client-side only)
+if (typeof window !== "undefined" && soundManager) {
   ;(window as any).soundManager = soundManager
 }

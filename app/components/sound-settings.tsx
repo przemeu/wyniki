@@ -22,44 +22,50 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
   const [loadingProgress, setLoadingProgress] = useState({ loaded: 0, total: 0 })
 
   useEffect(() => {
-    setSoundEnabled(soundManager.isEnabled())
-    setVolume(Math.round(soundManager.getVolume() * 100))
+    if (soundManager) {
+      setSoundEnabled(soundManager.isEnabled())
+      setVolume(Math.round(soundManager.getVolume() * 100))
 
-    // Update loading progress periodically
-    const interval = setInterval(() => {
-      setLoadingProgress(soundManager.getLoadingProgress())
-    }, 1000)
+      // Update loading progress periodically
+      const interval = setInterval(() => {
+        setLoadingProgress(soundManager.getLoadingProgress())
+      }, 1000)
 
-    return () => clearInterval(interval)
+      return () => clearInterval(interval)
+    }
   }, [])
 
   const handleSoundToggle = (enabled: boolean) => {
     setSoundEnabled(enabled)
-    soundManager.setEnabled(enabled)
+    soundManager?.setEnabled(enabled)
   }
 
   const handleVolumeChange = (value: number[]) => {
     const newVolume = value[0]
     setVolume(newVolume)
-    soundManager.setVolume(newVolume / 100)
+    soundManager?.setVolume(newVolume / 100)
   }
 
   const handlePreviewSound = async (soundType: SoundType) => {
-    await soundManager.previewSound(soundType)
+    await soundManager?.previewSound(soundType)
   }
 
   const handleDebugInfo = () => {
-    const status = soundManager.getSoundStatus()
-    setDebugInfo(status)
-    setShowDebug(true)
-    console.log("🐛 Sound Debug Info:", status)
+    if (soundManager) {
+      const status = soundManager.getSoundStatus()
+      setDebugInfo(status)
+      setShowDebug(true)
+      console.log("🐛 Sound Debug Info:", status)
+    }
   }
 
   const handleForceReload = async () => {
-    await soundManager.forceReloadSounds()
-    const status = soundManager.getSoundStatus()
-    setDebugInfo(status)
-    setLoadingProgress(soundManager.getLoadingProgress())
+    if (soundManager) {
+      await soundManager.forceReloadSounds()
+      const status = soundManager.getSoundStatus()
+      setDebugInfo(status)
+      setLoadingProgress(soundManager.getLoadingProgress())
+    }
   }
 
   const getSoundStatusIcon = (soundInfo: any) => {
@@ -75,6 +81,25 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
       default:
         return <Clock className="w-3 h-3 text-gray-400" />
     }
+  }
+
+  // Show message if soundManager is not available (SSR)
+  if (!soundManager) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="w-[95vw] max-w-lg mx-auto">
+          <DialogHeader>
+            <DialogTitle className="text-lg flex items-center gap-2">
+              <Volume2 className="w-5 h-5" />
+              Ustawienia Dźwięków
+            </DialogTitle>
+          </DialogHeader>
+          <div className="text-center py-8">
+            <p className="text-gray-500">Ładowanie systemu dźwięków...</p>
+          </div>
+        </DialogContent>
+      </Dialog>
+    )
   }
 
   return (
@@ -161,6 +186,7 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
                   <div>Włączone: {debugInfo.enabled ? "✅" : "❌"}</div>
                   <div>Głośność: {Math.round(debugInfo.volume * 100)}%</div>
                   <div>Interakcja użytkownika: {debugInfo.userInteracted ? "✅" : "❌"}</div>
+                  <div>Środowisko: {debugInfo.isClient ? "Przeglądarka ✅" : "Serwer ❌"}</div>
 
                   <div className="font-semibold mt-3 mb-2">Dźwięki:</div>
                   {Object.entries(debugInfo.sounds).map(([id, info]: [string, any]) => (
