@@ -1,8 +1,10 @@
 // Sound management utilities
-export type SoundType = "default" | "whistle" | "cheer" | "horn" | "bell" | "none"
+export type SoundType = "default" | "commentary" | "whistle" | "cheer" | "horn" | "bell" | "yellow-horn" | "none"
 
 export const AVAILABLE_SOUNDS: { id: SoundType; name: string; file: string }[] = [
   { id: "none", name: "Brak dźwięku", file: "" },
+  { id: "commentary", name: "Komentarz", file: "/sounds/goal-commentary.mp3" },
+  { id: "yellow-horn", name: "Klakson Żółtych", file: "/sounds/goal-yellow-horn.mp3" },
   { id: "default", name: "Domyślny", file: "/sounds/goal-default.mp3" },
   { id: "whistle", name: "Gwizdek", file: "/sounds/goal-whistle.mp3" },
   { id: "cheer", name: "Okrzyki", file: "/sounds/goal-cheer.mp3" },
@@ -12,12 +14,20 @@ export const AVAILABLE_SOUNDS: { id: SoundType; name: string; file: string }[] =
 
 // Player-specific sound mappings (can be expanded)
 export const PLAYER_SOUNDS: Record<string, SoundType> = {
-  "Łukasz J.": "cheer",
+  "Łukasz J.": "commentary",
   "Maciej M.": "horn",
   "Tomek W.": "whistle",
   "Grzegorz O.": "bell",
-  "Krystian G.": "default",
+  "Krystian G.": "commentary",
+  "Adam S.": "commentary",
+  "Michał G.": "cheer",
   // Add more players as needed
+}
+
+// Team-based default sounds
+export const TEAM_DEFAULT_SOUNDS: Record<"yellow" | "blue", SoundType> = {
+  yellow: "yellow-horn", // Boston Bruins horn for yellow team
+  blue: "commentary", // "OOOHHH YESSS!!" commentary for blue team
 }
 
 class SoundManager {
@@ -70,11 +80,12 @@ class SoundManager {
     return stored !== null ? Number.parseFloat(stored) : 0.7
   }
 
-  async playGoalSound(playerName: string) {
+  async playGoalSound(playerName: string, team: "yellow" | "blue") {
     if (!this.enabled) return
 
     try {
-      const soundType = PLAYER_SOUNDS[playerName] || "default"
+      // First check for player-specific sound, then team default
+      const soundType = PLAYER_SOUNDS[playerName] || TEAM_DEFAULT_SOUNDS[team]
       const audio = this.audioCache.get(soundType)
 
       if (audio) {
@@ -99,6 +110,20 @@ class SoundManager {
     } catch (error) {
       console.warn("Failed to preview sound:", error)
     }
+  }
+
+  async stopAllSounds() {
+    this.audioCache.forEach((audio) => {
+      if (!audio.paused) {
+        audio.pause()
+        audio.currentTime = 0
+      }
+    })
+  }
+
+  // Helper method to get the sound that would play for a player
+  getPlayerSound(playerName: string, team: "yellow" | "blue"): SoundType {
+    return PLAYER_SOUNDS[playerName] || TEAM_DEFAULT_SOUNDS[team]
   }
 }
 

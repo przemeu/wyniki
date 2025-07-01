@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { Volume2, VolumeX, Play } from "lucide-react"
-import { soundManager, AVAILABLE_SOUNDS, PLAYER_SOUNDS, type SoundType } from "@/lib/sounds"
+import { soundManager, AVAILABLE_SOUNDS, PLAYER_SOUNDS, TEAM_DEFAULT_SOUNDS, type SoundType } from "@/lib/sounds"
 
 interface SoundSettingsProps {
   open: boolean
@@ -76,10 +76,58 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
             </CardContent>
           </Card>
 
+          {/* Team Default Sounds */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Domyślne Dźwięki Drużyn</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 bg-yellow-50 rounded border-l-4 border-yellow-400">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-yellow-700">🟡 Żółci</span>
+                    <span className="text-xs text-gray-600">
+                      ({AVAILABLE_SOUNDS.find((s) => s.id === TEAM_DEFAULT_SOUNDS.yellow)?.name})
+                    </span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handlePreviewSound(TEAM_DEFAULT_SOUNDS.yellow)}
+                    disabled={!soundEnabled}
+                    className="text-xs px-2 py-1"
+                  >
+                    <Play className="w-3 h-3 mr-1" />
+                    Test
+                  </Button>
+                </div>
+
+                <div className="flex items-center justify-between p-3 bg-blue-50 rounded border-l-4 border-blue-500">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-blue-700">🔵 Niebiescy</span>
+                    <span className="text-xs text-gray-600">
+                      ({AVAILABLE_SOUNDS.find((s) => s.id === TEAM_DEFAULT_SOUNDS.blue)?.name})
+                    </span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handlePreviewSound(TEAM_DEFAULT_SOUNDS.blue)}
+                    disabled={!soundEnabled}
+                    className="text-xs px-2 py-1"
+                  >
+                    <Play className="w-3 h-3 mr-1" />
+                    Test
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Available Sounds */}
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Dostępne Dźwięki</CardTitle>
+              <CardTitle className="text-base">Wszystkie Dostępne Dźwięki</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
@@ -105,7 +153,7 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
           {/* Player Sound Assignments */}
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Przypisane Dźwięki Graczy</CardTitle>
+              <CardTitle className="text-base">Specjalne Przypisania Graczy</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-2 max-h-40 overflow-y-auto">
@@ -130,7 +178,7 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
                   )
                 })}
               </div>
-              <p className="text-xs text-gray-500 mt-3">Pozostali gracze używają domyślnego dźwięku</p>
+              <p className="text-xs text-gray-500 mt-3">Pozostali gracze używają domyślnych dźwięków swoich drużyn</p>
             </CardContent>
           </Card>
 

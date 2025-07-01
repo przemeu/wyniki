@@ -1,10 +1,12 @@
-const CACHE_NAME = "football-scorer-v2"
+const CACHE_NAME = "football-scorer-v3"
 const urlsToCache = [
   "/",
   "/offline",
   "/logos/yellow.png",
   "/logos/blue.png",
   "/manifest.json",
+  "/sounds/goal-commentary.mp3",
+  "/sounds/goal-yellow-horn.mp3",
   "/sounds/goal-default.mp3",
   "/sounds/goal-whistle.mp3",
   "/sounds/goal-cheer.mp3",
