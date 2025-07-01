@@ -34,23 +34,6 @@ interface DBPlayer {
   created_at: string
 }
 
-// Default starting lineups
-const DEFAULT_YELLOW_PLAYERS: Player[] = [
-  { id: "yellow_1", name: "Przemek W.", goals: 0, assists: 0 },
-  { id: "yellow_2", name: "Tomek Ł.", goals: 0, assists: 0 },
-  { id: "yellow_3", name: "Łukasz J.", goals: 0, assists: 0 },
-  { id: "yellow_4", name: "Marek Z.", goals: 0, assists: 0 },
-  { id: "yellow_5", name: "Paweł L.", goals: 0, assists: 0 },
-]
-
-const DEFAULT_BLUE_PLAYERS: Player[] = [
-  { id: "blue_1", name: "Krystian G.", goals: 0, assists: 0 },
-  { id: "blue_2", name: "Marcin P.", goals: 0, assists: 0 },
-  { id: "blue_3", name: "Adam T.", goals: 0, assists: 0 },
-  { id: "blue_4", name: "Michał G.", goals: 0, assists: 0 },
-  { id: "blue_5", name: "Konrad L.", goals: 0, assists: 0 },
-]
-
 export default function FootballScorer() {
   const [mode, setMode] = useState<"setup" | "game">("setup")
   const [gameActive, setGameActive] = useState(false)
@@ -64,9 +47,9 @@ export default function FootballScorer() {
   // Add loading state
   const [playersLoading, setPlayersLoading] = useState(true)
 
-  // Initialize with default starting lineups
-  const [yellowPlayers, setYellowPlayers] = useState<Player[]>(DEFAULT_YELLOW_PLAYERS)
-  const [bluePlayers, setBluePlayers] = useState<Player[]>(DEFAULT_BLUE_PLAYERS)
+  // Initialize with empty arrays - players will be selected from database
+  const [yellowPlayers, setYellowPlayers] = useState<Player[]>([])
+  const [bluePlayers, setBluePlayers] = useState<Player[]>([])
 
   const [yellowScore, setYellowScore] = useState(0)
   const [blueScore, setBlueScore] = useState(0)
@@ -137,13 +120,6 @@ export default function FootballScorer() {
 
     setPendingGoal({ team, scorer: playerName })
     setAssistDialogOpen(true)
-
-    // Play goal sound immediately when goal is scored
-    try {
-      soundManager?.playGoalSound(playerName, team)
-    } catch (error) {
-      console.warn("Failed to play goal sound:", error)
-    }
   }
 
   const handleOwnGoal = (team: "yellow" | "blue") => {
@@ -186,7 +162,14 @@ export default function FootballScorer() {
       setBlueScore(blueScore + 1)
     }
 
-    // Update player stats (existing code remains the same)
+    // Play goal sound for the scorer
+    try {
+      await soundManager.playGoalSound(pendingGoal.scorer)
+    } catch (error) {
+      console.warn("Failed to play goal sound:", error)
+    }
+
+    // Update player stats (existing code)
     const updatePlayerStats = (players: Player[], setPlayers: (players: Player[]) => void) => {
       const updatedPlayers = players.map((player) => {
         if (player.name === pendingGoal.scorer) {
@@ -303,12 +286,6 @@ export default function FootballScorer() {
     setResetDialogOpen(false)
   }
 
-  // Reset to default lineups
-  const resetToDefaultLineups = () => {
-    setYellowPlayers([...DEFAULT_YELLOW_PLAYERS])
-    setBluePlayers([...DEFAULT_BLUE_PLAYERS])
-  }
-
   // Get available players for selection (not already selected)
   const getAvailablePlayersForTeam = (team: "yellow" | "blue") => {
     const selectedPlayers = [...yellowPlayers, ...bluePlayers].map((p) => p.name)
@@ -346,14 +323,6 @@ export default function FootballScorer() {
                   <img src="/logos/blue.png" alt="Niebiescy" className="w-12 h-12 sm:w-20 sm:h-20 object-contain" />
                 </div>
               </div>
-            </div>
-
-            {/* Reset to Default Button */}
-            <div className="text-center mb-4">
-              <Button variant="outline" onClick={resetToDefaultLineups} className="text-sm bg-white/80 hover:bg-white">
-                <RotateCcw className="w-4 h-4 mr-2" />
-                Przywróć Domyślne Składy
-              </Button>
             </div>
 
             {/* Team Setup */}
@@ -597,15 +566,6 @@ export default function FootballScorer() {
               >
                 <Volume2 className="w-3 h-3 sm:w-4 sm:h-4 mr-1" />
                 DŹWIĘKI
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => soundManager?.stopAllSounds()}
-                size="sm"
-                className="text-xs sm:text-sm px-2 sm:px-3"
-              >
-                <X className="w-3 h-3 sm:w-4 sm:h-4 mr-1" />
-                STOP
               </Button>
             </div>
 
