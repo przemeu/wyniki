@@ -1,13 +1,16 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
-import { Play, Pause, RotateCcw, Download, Settings, Users, Trophy } from "lucide-react"
+import { Play, Pause, RotateCcw, Download, Settings, Users, Trophy, Plus, X, Volume2 } from "lucide-react"
+import { getPlayers } from "@/lib/actions"
+import InstallPrompt from "./components/install-prompt"
+import { soundManager } from "@/lib/sounds"
+import SoundSettings from "./components/sound-settings"
 
 interface Player {
   id: string
@@ -25,26 +28,28 @@ interface GameAction {
   assistant?: string
 }
 
+interface DBPlayer {
+  id: number
+  name: string
+  created_at: string
+}
+
 export default function FootballScorer() {
   const [mode, setMode] = useState<"setup" | "game">("setup")
   const [gameActive, setGameActive] = useState(false)
+  const [availablePlayers, setAvailablePlayers] = useState<DBPlayer[]>([])
+  const [playerSelectDialog, setPlayerSelectDialog] = useState<{ open: boolean; team: "yellow" | "blue" | null }>({
+    open: false,
+    team: null,
+  })
+  const [soundSettingsOpen, setSoundSettingsOpen] = useState(false)
 
-  // Initialize with 5 default players for each team
-  const [yellowPlayers, setYellowPlayers] = useState<Player[]>([
-    { id: "y1", name: "Przemek W.", goals: 0, assists: 0 },
-    { id: "y2", name: "Tomek Ł.", goals: 0, assists: 0 },
-    { id: "y3", name: "Łukasz J.", goals: 0, assists: 0 },
-    { id: "y4", name: "Marek Z.", goals: 0, assists: 0 },
-    { id: "y5", name: "Paweł L.", goals: 0, assists: 0 },
-  ])
+  // Add loading state
+  const [playersLoading, setPlayersLoading] = useState(true)
 
-  const [bluePlayers, setBluePlayers] = useState<Player[]>([
-    { id: "b1", name: "Krystian G.", goals: 0, assists: 0 },
-    { id: "b2", name: "Marcin P.", goals: 0, assists: 0 },
-    { id: "b3", name: "Adam T.", goals: 0, assists: 0 },
-    { id: "b4", name: "Michał G.", goals: 0, assists: 0 },
-    { id: "b5", name: "Konrad L.", goals: 0, assists: 0 },
-  ])
+  // Initialize with empty arrays - players will be selected from database
+  const [yellowPlayers, setYellowPlayers] = useState<Player[]>([])
+  const [bluePlayers, setBluePlayers] = useState<Player[]>([])
 
   const [yellowScore, setYellowScore] = useState(0)
   const [blueScore, setBlueScore] = useState(0)
@@ -53,26 +58,50 @@ export default function FootballScorer() {
   const [pendingGoal, setPendingGoal] = useState<{ team: "yellow" | "blue"; scorer: string } | null>(null)
   const [resetDialogOpen, setResetDialogOpen] = useState(false)
 
+  // Load players on component mount
+  useEffect(() => {
+    const loadPlayers = async () => {
+      try {
+        setPlayersLoading(true)
+        const players = await getPlayers()
+        setAvailablePlayers(players)
+      } catch (error) {
+        console.error("Failed to load players:", error)
+        // This shouldn't happen now since getPlayers always returns default players on error
+        setAvailablePlayers([])
+      } finally {
+        setPlayersLoading(false)
+      }
+    }
+    loadPlayers()
+  }, [])
+
   // Setup mode - player management
-  const addPlayer = (team: "yellow" | "blue", name: string) => {
-    if (!name.trim()) return
+  const openPlayerSelect = (team: "yellow" | "blue") => {
+    setPlayerSelectDialog({ open: true, team })
+  }
+
+  const addPlayerFromDB = (dbPlayer: DBPlayer) => {
+    if (!playerSelectDialog.team) return
 
     const newPlayer: Player = {
-      id: Date.now().toString(),
-      name: name.trim(),
+      id: `${playerSelectDialog.team}_${dbPlayer.id}`,
+      name: dbPlayer.name,
       goals: 0,
       assists: 0,
     }
 
-    if (team === "yellow") {
-      if (yellowPlayers.length < 8) {
+    if (playerSelectDialog.team === "yellow") {
+      if (yellowPlayers.length < 8 && !yellowPlayers.some((p) => p.name === dbPlayer.name)) {
         setYellowPlayers([...yellowPlayers, newPlayer])
       }
     } else {
-      if (bluePlayers.length < 8) {
+      if (bluePlayers.length < 8 && !bluePlayers.some((p) => p.name === dbPlayer.name)) {
         setBluePlayers([...bluePlayers, newPlayer])
       }
     }
+
+    setPlayerSelectDialog({ open: false, team: null })
   }
 
   const removePlayer = (team: "yellow" | "blue", playerId: string) => {
@@ -113,7 +142,7 @@ export default function FootballScorer() {
     }
   }
 
-  const confirmGoal = (assistantName?: string) => {
+  const confirmGoal = async (assistantName?: string) => {
     if (!pendingGoal) return
 
     const action: GameAction = {
@@ -133,7 +162,14 @@ export default function FootballScorer() {
       setBlueScore(blueScore + 1)
     }
 
-    // Update player stats
+    // Play goal sound for the scorer
+    try {
+      await soundManager.playGoalSound(pendingGoal.scorer)
+    } catch (error) {
+      console.warn("Failed to play goal sound:", error)
+    }
+
+    // Update player stats (existing code)
     const updatePlayerStats = (players: Player[], setPlayers: (players: Player[]) => void) => {
       const updatedPlayers = players.map((player) => {
         if (player.name === pendingGoal.scorer) {
@@ -250,8 +286,203 @@ export default function FootballScorer() {
     setResetDialogOpen(false)
   }
 
+  // Get available players for selection (not already selected)
+  const getAvailablePlayersForTeam = (team: "yellow" | "blue") => {
+    const selectedPlayers = [...yellowPlayers, ...bluePlayers].map((p) => p.name)
+    return availablePlayers.filter((p) => !selectedPlayers.includes(p.name))
+  }
+
   if (mode === "setup") {
     return (
+      <>
+        <div
+          className="min-h-screen p-2 sm:p-4"
+          style={{
+            background: "linear-gradient(to bottom, #fefce8, #fef3c7, #fde68a)",
+          }}
+        >
+          <div className="max-w-6xl mx-auto">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row items-center justify-between mb-4 sm:mb-6 gap-4">
+              <div className="flex items-center gap-2 sm:gap-4">
+                <div className="w-12 h-12 sm:w-20 sm:h-20 flex items-center justify-center">
+                  <img src="/logos/yellow.png" alt="Żółci" className="w-12 h-12 sm:w-20 sm:h-20 object-contain" />
+                </div>
+                <span className="text-xl sm:text-2xl font-bold">0</span>
+              </div>
+
+              <div className="text-center">
+                <Trophy className="w-6 h-6 sm:w-8 sm:h-8 mx-auto mb-2 text-gray-600" />
+                <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Konfiguracja Meczu</h1>
+                <p className="text-sm sm:text-base text-gray-600">Wybierz 5-8 graczy na drużynę</p>
+              </div>
+
+              <div className="flex items-center gap-2 sm:gap-4">
+                <span className="text-xl sm:text-2xl font-bold">0</span>
+                <div className="w-12 h-12 sm:w-20 sm:h-20 flex items-center justify-center">
+                  <img src="/logos/blue.png" alt="Niebiescy" className="w-12 h-12 sm:w-20 sm:h-20 object-contain" />
+                </div>
+              </div>
+            </div>
+
+            {/* Team Setup */}
+            <div className="grid grid-cols-1 gap-4 sm:gap-6 mb-4 sm:mb-6">
+              {/* Yellow Team */}
+              <Card className="border-l-4 border-l-yellow-400 bg-white/80 backdrop-blur-sm">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-yellow-600 text-base sm:text-lg">
+                    <Users className="w-4 h-4 sm:w-5 sm:h-5" />
+                    Żółci ({yellowPlayers.length}/8)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 sm:space-y-3">
+                  {yellowPlayers.map((player) => (
+                    <div key={player.id} className="flex items-center justify-between p-2 bg-yellow-50 rounded">
+                      <span className="text-sm sm:text-base font-medium">{player.name}</span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => removePlayer("yellow", player.id)}
+                        className="text-xs sm:text-sm"
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ))}
+
+                  {yellowPlayers.length < 8 && (
+                    <Button
+                      variant="outline"
+                      className="w-full border-dashed border-yellow-300 text-yellow-600 hover:bg-yellow-50 bg-transparent text-sm sm:text-base"
+                      onClick={() => openPlayerSelect("yellow")}
+                      disabled={playersLoading || getAvailablePlayersForTeam("yellow").length === 0}
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      {playersLoading ? "Ładowanie..." : `Dodaj Gracza (${yellowPlayers.length}/8)`}
+                    </Button>
+                  )}
+
+                  {yellowPlayers.length >= 5 && (
+                    <div className="flex items-center gap-2 text-green-600 text-sm">
+                      <span>✓</span> Gotowy do gry
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Blue Team */}
+              <Card className="border-l-4 border-l-blue-500 bg-white/80 backdrop-blur-sm">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-blue-600 text-base sm:text-lg">
+                    <Users className="w-4 h-4 sm:w-5 sm:h-5" />
+                    Niebiescy ({bluePlayers.length}/8)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 sm:space-y-3">
+                  {bluePlayers.map((player) => (
+                    <div key={player.id} className="flex items-center justify-between p-2 bg-blue-50 rounded">
+                      <span className="text-sm sm:text-base font-medium">{player.name}</span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => removePlayer("blue", player.id)}
+                        className="text-xs sm:text-sm"
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ))}
+
+                  {bluePlayers.length < 8 && (
+                    <Button
+                      variant="outline"
+                      className="w-full border-dashed border-blue-300 text-blue-600 hover:bg-blue-50 bg-transparent text-sm sm:text-base"
+                      onClick={() => openPlayerSelect("blue")}
+                      disabled={playersLoading || getAvailablePlayersForTeam("blue").length === 0}
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      {playersLoading ? "Ładowanie..." : `Dodaj Gracza (${bluePlayers.length}/8)`}
+                    </Button>
+                  )}
+
+                  {bluePlayers.length >= 5 && (
+                    <div className="flex items-center gap-2 text-green-600 text-sm">
+                      <span>✓</span> Gotowy do gry
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Start Game Button */}
+            <div className="text-center mb-4">
+              <Button
+                size="lg"
+                className="bg-green-500 hover:bg-green-600 text-white px-6 py-3 sm:px-8 text-sm sm:text-base"
+                disabled={!canStartGame}
+                onClick={() => setMode("game")}
+              >
+                <Play className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
+                ROZPOCZNIJ GRĘ
+              </Button>
+              {!canStartGame && (
+                <p className="text-xs sm:text-sm text-gray-500 mt-2">Każda drużyna musi mieć minimum 5 graczy</p>
+              )}
+            </div>
+
+            {/* Match Log Placeholder */}
+            <Card className="bg-white/80 backdrop-blur-sm">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-xs sm:text-sm text-gray-600">📋 Dziennik Meczu (0 akcji)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-center text-gray-400 italic py-4 sm:py-8 text-sm">Akcje gry pojawią się tutaj...</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Player Selection Dialog */}
+          <Dialog open={playerSelectDialog.open} onOpenChange={(open) => setPlayerSelectDialog({ open, team: null })}>
+            <DialogContent className="w-[95vw] max-w-md mx-auto">
+              <DialogHeader>
+                <DialogTitle className="text-base sm:text-lg">
+                  Wybierz gracza dla drużyny {playerSelectDialog.team === "yellow" ? "Żółci" : "Niebiescy"}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-2">
+                {playersLoading ? (
+                  <div className="text-center py-8">
+                    <p className="text-sm text-gray-500">Ładowanie graczy...</p>
+                  </div>
+                ) : (
+                  <ScrollArea className="h-60">
+                    {getAvailablePlayersForTeam(playerSelectDialog.team || "yellow").map((player) => (
+                      <Button
+                        key={player.id}
+                        variant="outline"
+                        className="w-full justify-start mb-2 bg-transparent text-sm sm:text-base"
+                        onClick={() => addPlayerFromDB(player)}
+                      >
+                        {player.name}
+                      </Button>
+                    ))}
+                    {getAvailablePlayersForTeam(playerSelectDialog.team || "yellow").length === 0 && (
+                      <p className="text-center text-gray-500 py-4">Brak dostępnych graczy</p>
+                    )}
+                  </ScrollArea>
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
+        <SoundSettings open={soundSettingsOpen} onOpenChange={setSoundSettingsOpen} />
+        <InstallPrompt />
+      </>
+    )
+  }
+
+  return (
+    <>
       <div
         className="min-h-screen p-2 sm:p-4"
         style={{
@@ -259,79 +490,132 @@ export default function FootballScorer() {
         }}
       >
         <div className="max-w-6xl mx-auto">
-          {/* Header */}
+          {/* Header with scores and controls */}
           <div className="flex flex-col sm:flex-row items-center justify-between mb-4 sm:mb-6 gap-4">
             <div className="flex items-center gap-2 sm:gap-4">
               <div className="w-12 h-12 sm:w-20 sm:h-20 flex items-center justify-center">
                 <img src="/logos/yellow.png" alt="Żółci" className="w-12 h-12 sm:w-20 sm:h-20 object-contain" />
               </div>
-              <span className="text-xl sm:text-2xl font-bold">0</span>
+              <span className="text-2xl sm:text-3xl font-bold">{yellowScore}</span>
             </div>
 
-            <div className="text-center">
-              <Trophy className="w-6 h-6 sm:w-8 sm:h-8 mx-auto mb-2 text-gray-600" />
-              <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Konfiguracja Meczu</h1>
-              <p className="text-sm sm:text-base text-gray-600">Dodaj 5-8 graczy na drużynę, aby rozpocząć mecz</p>
+            <div className="flex flex-wrap gap-1 sm:gap-2 justify-center">
+              <Button
+                variant={gameActive ? "destructive" : "default"}
+                onClick={() => setGameActive(!gameActive)}
+                className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm px-2 sm:px-3"
+                size="sm"
+              >
+                {gameActive ? <Pause className="w-3 h-3 sm:w-4 sm:h-4" /> : <Play className="w-3 h-3 sm:w-4 sm:h-4" />}
+                {gameActive ? "PAUZA" : "START"}
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={() => setGameActive(false)}
+                size="sm"
+                className="text-xs sm:text-sm px-2 sm:px-3"
+              >
+                ZATRZYMAJ
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={undoLastAction}
+                disabled={actions.length === 0}
+                size="sm"
+                className="text-xs sm:text-sm px-2 sm:px-3 bg-transparent"
+              >
+                <RotateCcw className="w-3 h-3 sm:w-4 sm:h-4 mr-1" />
+                COFNIJ
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={exportLog}
+                size="sm"
+                className="text-xs sm:text-sm px-2 sm:px-3 bg-transparent"
+              >
+                <Download className="w-3 h-3 sm:w-4 sm:h-4 mr-1" />
+                EKSPORT
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={() => setResetDialogOpen(true)}
+                size="sm"
+                className="text-xs sm:text-sm px-2 sm:px-3"
+              >
+                RESETUJ
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={() => setMode("setup")}
+                size="sm"
+                className="text-xs sm:text-sm px-2 sm:px-3"
+              >
+                <Settings className="w-3 h-3 sm:w-4 sm:h-4 mr-1" />
+                KONFIGURACJA
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setSoundSettingsOpen(true)}
+                size="sm"
+                className="text-xs sm:text-sm px-2 sm:px-3"
+              >
+                <Volume2 className="w-3 h-3 sm:w-4 sm:h-4 mr-1" />
+                DŹWIĘKI
+              </Button>
             </div>
 
             <div className="flex items-center gap-2 sm:gap-4">
-              <span className="text-xl sm:text-2xl font-bold">0</span>
+              <span className="text-2xl sm:text-3xl font-bold">{blueScore}</span>
               <div className="w-12 h-12 sm:w-20 sm:h-20 flex items-center justify-center">
                 <img src="/logos/blue.png" alt="Niebiescy" className="w-12 h-12 sm:w-20 sm:h-20 object-contain" />
               </div>
             </div>
           </div>
 
-          {/* Team Setup */}
-          <div className="grid grid-cols-1 gap-4 sm:gap-6 mb-4 sm:mb-6">
+          {/* Teams - SIDE BY SIDE ON LARGER SCREENS */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 mb-4 sm:mb-6">
             {/* Yellow Team */}
             <Card className="border-l-4 border-l-yellow-400 bg-white/80 backdrop-blur-sm">
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-yellow-600 text-base sm:text-lg">
                   <Users className="w-4 h-4 sm:w-5 sm:h-5" />
-                  Żółci ({yellowPlayers.length}/8)
+                  Gracze Żółci
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2 sm:space-y-3">
-                {yellowPlayers.map((player, index) => (
-                  <div key={player.id} className="flex items-center gap-2">
-                    <Input
-                      value={player.name}
-                      onChange={(e) => {
-                        const updated = yellowPlayers.map((p) =>
-                          p.id === player.id ? { ...p, name: e.target.value } : p,
-                        )
-                        setYellowPlayers(updated)
-                      }}
-                      placeholder={`Gracz ${index + 1}`}
-                      className="text-sm sm:text-base"
-                    />
+              <CardContent>
+                <div className="grid grid-cols-2 gap-2 mb-4">
+                  {yellowPlayers.map((player) => (
                     <Button
+                      key={player.id}
                       variant="outline"
-                      size="sm"
-                      onClick={() => removePlayer("yellow", player.id)}
-                      className="text-xs sm:text-sm"
+                      className="h-10 sm:h-12 bg-yellow-400 hover:bg-yellow-500 text-blue-800 border-yellow-400 relative font-medium text-xs sm:text-sm px-2"
+                      onClick={() => handlePlayerClick("yellow", player.name)}
+                      disabled={!gameActive}
                     >
-                      Usuń
+                      <span className="absolute top-1 left-1 sm:left-2 text-xs opacity-75">⚽</span>
+                      <span className="truncate pl-3 sm:pl-4">{player.name}</span>
+                      {(player.goals > 0 || player.assists > 0) && (
+                        <Badge variant="secondary" className="ml-1 text-xs absolute top-1 right-1">
+                          {player.goals}G {player.assists}A
+                        </Badge>
+                      )}
                     </Button>
-                  </div>
-                ))}
+                  ))}
+                </div>
 
-                {yellowPlayers.length < 8 && (
-                  <Button
-                    variant="outline"
-                    className="w-full border-dashed border-yellow-300 text-yellow-600 hover:bg-yellow-50 bg-transparent text-sm sm:text-base"
-                    onClick={() => addPlayer("yellow", `Gracz ${yellowPlayers.length + 1}`)}
-                  >
-                    + Dodaj Gracza ({yellowPlayers.length}/8 łącznie)
-                  </Button>
-                )}
-
-                {yellowPlayers.length >= 5 && (
-                  <div className="flex items-center gap-2 text-green-600 text-sm">
-                    <span>✓</span> Gotowy do gry
-                  </div>
-                )}
+                <Button
+                  variant="destructive"
+                  className="w-full h-10 sm:h-12 text-sm sm:text-base"
+                  onClick={() => handleOwnGoal("yellow")}
+                  disabled={!gameActive}
+                >
+                  ⚠️ SAMOBÓJ
+                </Button>
               </CardContent>
             </Card>
 
@@ -340,358 +624,157 @@ export default function FootballScorer() {
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-blue-600 text-base sm:text-lg">
                   <Users className="w-4 h-4 sm:w-5 sm:h-5" />
-                  Niebiescy ({bluePlayers.length}/8)
+                  Gracze Niebiescy
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2 sm:space-y-3">
-                {bluePlayers.map((player, index) => (
-                  <div key={player.id} className="flex items-center gap-2">
-                    <Input
-                      value={player.name}
-                      onChange={(e) => {
-                        const updated = bluePlayers.map((p) =>
-                          p.id === player.id ? { ...p, name: e.target.value } : p,
-                        )
-                        setBluePlayers(updated)
-                      }}
-                      placeholder={`Gracz ${index + 1}`}
-                      className="text-sm sm:text-base"
-                    />
+              <CardContent>
+                <div className="grid grid-cols-2 gap-2 mb-4">
+                  {bluePlayers.map((player) => (
                     <Button
+                      key={player.id}
                       variant="outline"
-                      size="sm"
-                      onClick={() => removePlayer("blue", player.id)}
-                      className="text-xs sm:text-sm"
+                      className="h-10 sm:h-12 bg-blue-500 hover:bg-blue-600 text-yellow-400 border-blue-500 relative font-medium text-xs sm:text-sm px-2"
+                      onClick={() => handlePlayerClick("blue", player.name)}
+                      disabled={!gameActive}
                     >
-                      Usuń
+                      <span className="absolute top-1 left-1 sm:left-2 text-xs opacity-75">⚽</span>
+                      <span className="truncate pl-3 sm:pl-4">{player.name}</span>
+                      {(player.goals > 0 || player.assists > 0) && (
+                        <Badge variant="secondary" className="ml-1 text-xs absolute top-1 right-1">
+                          {player.goals}G {player.assists}A
+                        </Badge>
+                      )}
                     </Button>
-                  </div>
-                ))}
+                  ))}
+                </div>
 
-                {bluePlayers.length < 8 && (
-                  <Button
-                    variant="outline"
-                    className="w-full border-dashed border-blue-300 text-blue-600 hover:bg-blue-50 bg-transparent text-sm sm:text-base"
-                    onClick={() => addPlayer("blue", `Gracz ${bluePlayers.length + 1}`)}
-                  >
-                    + Dodaj Gracza ({bluePlayers.length}/8 łącznie)
-                  </Button>
-                )}
-
-                {bluePlayers.length >= 5 && (
-                  <div className="flex items-center gap-2 text-green-600 text-sm">
-                    <span>✓</span> Gotowy do gry
-                  </div>
-                )}
+                <Button
+                  variant="destructive"
+                  className="w-full h-10 sm:h-12 text-sm sm:text-base"
+                  onClick={() => handleOwnGoal("blue")}
+                  disabled={!gameActive}
+                >
+                  ⚠️ SAMOBÓJ
+                </Button>
               </CardContent>
             </Card>
           </div>
 
-          {/* Start Game Button */}
-          <div className="text-center mb-4">
-            <Button
-              size="lg"
-              className="bg-green-500 hover:bg-green-600 text-white px-6 py-3 sm:px-8 text-sm sm:text-base"
-              disabled={!canStartGame}
-              onClick={() => setMode("game")}
-            >
-              <Play className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
-              ROZPOCZNIJ GRĘ
-            </Button>
-            {!canStartGame && (
-              <p className="text-xs sm:text-sm text-gray-500 mt-2">Każda drużyna musi mieć minimum 5 graczy</p>
-            )}
-          </div>
-
-          {/* Match Log Placeholder */}
+          {/* Match Log */}
           <Card className="bg-white/80 backdrop-blur-sm">
             <CardHeader className="pb-3">
-              <CardTitle className="text-xs sm:text-sm text-gray-600">📋 Dziennik Meczu (0 akcji)</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-center text-gray-400 italic py-4 sm:py-8 text-sm">Akcje gry pojawią się tutaj...</p>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div
-      className="min-h-screen p-2 sm:p-4"
-      style={{
-        background: "linear-gradient(to bottom, #fefce8, #fef3c7, #fde68a)",
-      }}
-    >
-      <div className="max-w-6xl mx-auto">
-        {/* Header with scores and controls */}
-        <div className="flex flex-col sm:flex-row items-center justify-between mb-4 sm:mb-6 gap-4">
-          <div className="flex items-center gap-2 sm:gap-4">
-            <div className="w-12 h-12 sm:w-20 sm:h-20 flex items-center justify-center">
-              <img src="/logos/yellow.png" alt="Żółci" className="w-12 h-12 sm:w-20 sm:h-20 object-contain" />
-            </div>
-            <span className="text-2xl sm:text-3xl font-bold">{yellowScore}</span>
-          </div>
-
-          <div className="flex flex-wrap gap-1 sm:gap-2 justify-center">
-            <Button
-              variant={gameActive ? "destructive" : "default"}
-              onClick={() => setGameActive(!gameActive)}
-              className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm px-2 sm:px-3"
-              size="sm"
-            >
-              {gameActive ? <Pause className="w-3 h-3 sm:w-4 sm:h-4" /> : <Play className="w-3 h-3 sm:w-4 sm:h-4" />}
-              {gameActive ? "PAUZA" : "START"}
-            </Button>
-
-            <Button
-              variant="outline"
-              onClick={() => setGameActive(false)}
-              size="sm"
-              className="text-xs sm:text-sm px-2 sm:px-3"
-            >
-              ZATRZYMAJ
-            </Button>
-
-            <Button
-              variant="outline"
-              onClick={undoLastAction}
-              disabled={actions.length === 0}
-              size="sm"
-              className="text-xs sm:text-sm px-2 sm:px-3 bg-transparent"
-            >
-              <RotateCcw className="w-3 h-3 sm:w-4 sm:h-4 mr-1" />
-              COFNIJ
-            </Button>
-
-            <Button
-              variant="outline"
-              onClick={exportLog}
-              size="sm"
-              className="text-xs sm:text-sm px-2 sm:px-3 bg-transparent"
-            >
-              <Download className="w-3 h-3 sm:w-4 sm:h-4 mr-1" />
-              EKSPORT
-            </Button>
-
-            <Button
-              variant="outline"
-              onClick={() => setResetDialogOpen(true)}
-              size="sm"
-              className="text-xs sm:text-sm px-2 sm:px-3"
-            >
-              RESETUJ
-            </Button>
-
-            <Button
-              variant="outline"
-              onClick={() => setMode("setup")}
-              size="sm"
-              className="text-xs sm:text-sm px-2 sm:px-3"
-            >
-              <Settings className="w-3 h-3 sm:w-4 sm:h-4 mr-1" />
-              KONFIGURACJA
-            </Button>
-          </div>
-
-          <div className="flex items-center gap-2 sm:gap-4">
-            <span className="text-2xl sm:text-3xl font-bold">{blueScore}</span>
-            <div className="w-12 h-12 sm:w-20 sm:h-20 flex items-center justify-center">
-              <img src="/logos/blue.png" alt="Niebiescy" className="w-12 h-12 sm:w-20 sm:h-20 object-contain" />
-            </div>
-          </div>
-        </div>
-
-        {/* Teams */}
-        <div className="grid grid-cols-1 gap-4 sm:gap-6 mb-4 sm:mb-6">
-          {/* Yellow Team */}
-          <Card className="border-l-4 border-l-yellow-400 bg-white/80 backdrop-blur-sm">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-yellow-600 text-base sm:text-lg">
-                <Users className="w-4 h-4 sm:w-5 sm:h-5" />
-                Gracze Żółci
+              <CardTitle className="text-xs sm:text-sm text-gray-600">
+                📋 Dziennik Meczu ({actions.length} {actions.length === 1 ? "akcja" : "akcji"})
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-2 gap-2 mb-4">
-                {yellowPlayers.map((player) => (
-                  <Button
-                    key={player.id}
-                    variant="outline"
-                    className="h-10 sm:h-12 bg-yellow-400 hover:bg-yellow-500 text-blue-800 border-yellow-400 relative font-medium text-xs sm:text-sm px-2"
-                    onClick={() => handlePlayerClick("yellow", player.name)}
-                    disabled={!gameActive}
-                  >
-                    <span className="absolute top-1 left-1 sm:left-2 text-xs opacity-75">⚽</span>
-                    <span className="truncate pl-3 sm:pl-4">{player.name}</span>
-                    {(player.goals > 0 || player.assists > 0) && (
-                      <Badge variant="secondary" className="ml-1 text-xs absolute top-1 right-1">
-                        {player.goals}G {player.assists}A
-                      </Badge>
-                    )}
-                  </Button>
-                ))}
-              </div>
-
-              <Button
-                variant="destructive"
-                className="w-full h-10 sm:h-12 text-sm sm:text-base"
-                onClick={() => handleOwnGoal("yellow")}
-                disabled={!gameActive}
-              >
-                ⚠️ SAMOBÓJ
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Blue Team */}
-          <Card className="border-l-4 border-l-blue-500 bg-white/80 backdrop-blur-sm">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-blue-600 text-base sm:text-lg">
-                <Users className="w-4 h-4 sm:w-5 sm:h-5" />
-                Gracze Niebiescy
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 gap-2 mb-4">
-                {bluePlayers.map((player) => (
-                  <Button
-                    key={player.id}
-                    variant="outline"
-                    className="h-10 sm:h-12 bg-blue-500 hover:bg-blue-600 text-yellow-400 border-blue-500 relative font-medium text-xs sm:text-sm px-2"
-                    onClick={() => handlePlayerClick("blue", player.name)}
-                    disabled={!gameActive}
-                  >
-                    <span className="absolute top-1 left-1 sm:left-2 text-xs opacity-75">⚽</span>
-                    <span className="truncate pl-3 sm:pl-4">{player.name}</span>
-                    {(player.goals > 0 || player.assists > 0) && (
-                      <Badge variant="secondary" className="ml-1 text-xs absolute top-1 right-1">
-                        {player.goals}G {player.assists}A
-                      </Badge>
-                    )}
-                  </Button>
-                ))}
-              </div>
-
-              <Button
-                variant="destructive"
-                className="w-full h-10 sm:h-12 text-sm sm:text-base"
-                onClick={() => handleOwnGoal("blue")}
-                disabled={!gameActive}
-              >
-                ⚠️ SAMOBÓJ
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Match Log */}
-        <Card className="bg-white/80 backdrop-blur-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-xs sm:text-sm text-gray-600">
-              📋 Dziennik Meczu ({actions.length} {actions.length === 1 ? "akcja" : "akcji"})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ScrollArea className="h-32 sm:h-48">
-              {actions.length === 0 ? (
-                <p className="text-center text-gray-400 italic py-4 sm:py-8 text-sm">Akcje gry pojawią się tutaj...</p>
-              ) : (
-                <div className="space-y-2">
-                  {actions.map((action) => (
-                    <div key={action.id} className="flex items-center gap-2 sm:gap-3 p-2 bg-gray-50 rounded">
-                      <span className="text-xs sm:text-sm text-gray-500 min-w-[40px] sm:min-w-[50px]">
-                        {action.timestamp}
-                      </span>
-                      <span className="text-xs sm:text-sm">
-                        {action.type === "goal" ? (
-                          <>
-                            <span className="font-medium">Gol:</span> {action.scorer}
-                            <span className={`ml-1 ${action.team === "yellow" ? "text-yellow-600" : "text-blue-600"}`}>
-                              ({action.team === "yellow" ? "Żółci" : "Niebiescy"})
-                            </span>
-                            {action.assistant && <span className="text-gray-600">, Asysta: {action.assistant}</span>}
-                          </>
-                        ) : (
-                          <>
-                            <span className="font-medium text-red-600">Samobój</span>
-                            <span className={`ml-1 ${action.team === "yellow" ? "text-yellow-600" : "text-blue-600"}`}>
-                              ({action.team === "yellow" ? "Żółci" : "Niebiescy"})
-                            </span>
-                          </>
-                        )}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </ScrollArea>
-          </CardContent>
-        </Card>
-
-        {/* Assist Dialog */}
-        <Dialog open={assistDialogOpen} onOpenChange={setAssistDialogOpen}>
-          <DialogContent className="w-[95vw] max-w-md mx-auto">
-            <DialogHeader>
-              <DialogTitle className="text-base sm:text-lg">Czy była asysta?</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3 sm:space-y-4">
-              <p className="text-sm text-gray-600">
-                Gol: <strong>{pendingGoal?.scorer}</strong> ({pendingGoal?.team === "yellow" ? "Żółci" : "Niebiescy"})
-              </p>
-
-              <div className="space-y-2 max-h-60 overflow-y-auto">
-                <Button
-                  variant="outline"
-                  className="w-full justify-start bg-transparent text-sm sm:text-base h-10 sm:h-auto"
-                  onClick={() => confirmGoal()}
-                >
-                  Bez asysty
-                </Button>
-
-                {pendingGoal &&
-                  (pendingGoal.team === "yellow" ? yellowPlayers : bluePlayers)
-                    .filter((p) => p.name !== pendingGoal.scorer)
-                    .map((player) => (
-                      <Button
-                        key={player.id}
-                        variant="outline"
-                        className="w-full justify-start bg-transparent text-sm sm:text-base h-10 sm:h-auto"
-                        onClick={() => confirmGoal(player.name)}
-                      >
-                        Asysta: {player.name}
-                      </Button>
+              <ScrollArea className="h-32 sm:h-48">
+                {actions.length === 0 ? (
+                  <p className="text-center text-gray-400 italic py-4 sm:py-8 text-sm">
+                    Akcje gry pojawią się tutaj...
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {actions.map((action) => (
+                      <div key={action.id} className="flex items-center gap-2 sm:gap-3 p-2 bg-gray-50 rounded">
+                        <span className="text-xs sm:text-sm text-gray-500 min-w-[40px] sm:min-w-[50px]">
+                          {action.timestamp}
+                        </span>
+                        <span className="text-xs sm:text-sm">
+                          {action.type === "goal" ? (
+                            <>
+                              <span className="font-medium">Gol:</span> {action.scorer}
+                              <span
+                                className={`ml-1 ${action.team === "yellow" ? "text-yellow-600" : "text-blue-600"}`}
+                              >
+                                ({action.team === "yellow" ? "Żółci" : "Niebiescy"})
+                              </span>
+                              {action.assistant && <span className="text-gray-600">, Asysta: {action.assistant}</span>}
+                            </>
+                          ) : (
+                            <>
+                              <span className="font-medium text-red-600">Samobój</span>
+                              <span
+                                className={`ml-1 ${action.team === "yellow" ? "text-yellow-600" : "text-blue-600"}`}
+                              >
+                                ({action.team === "yellow" ? "Żółci" : "Niebiescy"})
+                              </span>
+                            </>
+                          )}
+                        </span>
+                      </div>
                     ))}
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+                  </div>
+                )}
+              </ScrollArea>
+            </CardContent>
+          </Card>
 
-        {/* Reset Confirmation Dialog */}
-        <Dialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
-          <DialogContent className="w-[95vw] max-w-md mx-auto">
-            <DialogHeader>
-              <DialogTitle className="text-base sm:text-lg">Potwierdź reset meczu</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3 sm:space-y-4">
-              <p className="text-sm text-gray-600">
-                Czy na pewno chcesz zresetować mecz? Ta akcja usunie wszystkie gole, asysty i historię akcji.
-              </p>
-              <p className="text-sm font-medium text-red-600">Tej operacji nie można cofnąć!</p>
+          {/* Assist Dialog */}
+          <Dialog open={assistDialogOpen} onOpenChange={setAssistDialogOpen}>
+            <DialogContent className="w-[95vw] max-w-md mx-auto">
+              <DialogHeader>
+                <DialogTitle className="text-base sm:text-lg">Czy była asysta?</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3 sm:space-y-4">
+                <p className="text-sm text-gray-600">
+                  Gol: <strong>{pendingGoal?.scorer}</strong> ({pendingGoal?.team === "yellow" ? "Żółci" : "Niebiescy"})
+                </p>
 
-              <div className="flex gap-2 justify-end">
-                <Button variant="outline" onClick={() => setResetDialogOpen(false)} size="sm" className="text-sm">
-                  Anuluj
-                </Button>
-                <Button variant="destructive" onClick={confirmReset} size="sm" className="text-sm">
-                  Tak, resetuj mecz
-                </Button>
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start bg-transparent text-sm sm:text-base h-10 sm:h-auto"
+                    onClick={() => confirmGoal()}
+                  >
+                    Bez asysty
+                  </Button>
+
+                  {pendingGoal &&
+                    (pendingGoal.team === "yellow" ? yellowPlayers : bluePlayers)
+                      .filter((p) => p.name !== pendingGoal.scorer)
+                      .map((player) => (
+                        <Button
+                          key={player.id}
+                          variant="outline"
+                          className="w-full justify-start bg-transparent text-sm sm:text-base h-10 sm:h-auto"
+                          onClick={() => confirmGoal(player.name)}
+                        >
+                          Asysta: {player.name}
+                        </Button>
+                      ))}
+                </div>
               </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+            </DialogContent>
+          </Dialog>
+
+          {/* Reset Confirmation Dialog */}
+          <Dialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
+            <DialogContent className="w-[95vw] max-w-md mx-auto">
+              <DialogHeader>
+                <DialogTitle className="text-base sm:text-lg">Potwierdź reset meczu</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3 sm:space-y-4">
+                <p className="text-sm text-gray-600">
+                  Czy na pewno chcesz zresetować mecz? Ta akcja usunie wszystkie gole, asysty i historię akcji.
+                </p>
+                <p className="text-sm font-medium text-red-600">Tej operacji nie można cofnąć!</p>
+
+                <div className="flex gap-2 justify-end">
+                  <Button variant="outline" onClick={() => setResetDialogOpen(false)} size="sm" className="text-sm">
+                    Anuluj
+                  </Button>
+                  <Button variant="destructive" onClick={confirmReset} size="sm" className="text-sm">
+                    Tak, resetuj mecz
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
-    </div>
+      <SoundSettings open={soundSettingsOpen} onOpenChange={setSoundSettingsOpen} />
+      <InstallPrompt />
+    </>
   )
 }
