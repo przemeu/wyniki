@@ -1,10 +1,25 @@
 // Sound management utilities
 export type SoundType = "commentary" | "horn" | "none"
 
+// Updated to use Vercel Blob URLs for reliable hosting
 export const AVAILABLE_SOUNDS: { id: SoundType; name: string; files: string[] }[] = [
   { id: "none", name: "Brak dźwięku", files: [] },
-  { id: "commentary", name: "Komentarz", files: ["/sounds/goal-commentary.mp3"] },
-  { id: "horn", name: "Żółci Klakson", files: ["/sounds/goal-horn.mp3"] },
+  {
+    id: "commentary",
+    name: "Komentarz",
+    files: [
+      "https://blob.vercel-storage.com/goal-commentary-[BLOB_ID].mp3", // Will be replaced with actual blob URL
+      "/sounds/goal-commentary.mp3", // Fallback to local file
+    ],
+  },
+  {
+    id: "horn",
+    name: "Żółci Klakson",
+    files: [
+      "https://blob.vercel-storage.com/goal-horn-[BLOB_ID].mp3", // Will be replaced with actual blob URL
+      "/sounds/goal-horn.mp3", // Fallback to local file
+    ],
+  },
 ]
 
 // Clear all player-specific sound mappings - now empty by default
@@ -28,8 +43,8 @@ class SoundManager {
   private loadAttempts: Map<string, number> = new Map()
   private isClient = false
   private fallbackSound: HTMLAudioElement | null = null
-  // Add private property to store player assignments
   private playerAssignments: Record<string, SoundType> = {}
+  private deploymentInfo: any = {}
 
   constructor() {
     // Only run client-side code when in browser
@@ -40,9 +55,29 @@ class SoundManager {
       this.enabled = this.isEnabled()
       this.volume = this.getVolume()
 
+      // Detect deployment environment
+      this.detectDeploymentEnvironment()
+
       // Wait for user interaction before preloading sounds
       this.setupUserInteractionListener()
     }
+  }
+
+  private detectDeploymentEnvironment() {
+    if (!this.isClient) return
+
+    this.deploymentInfo = {
+      hostname: window.location.hostname,
+      protocol: window.location.protocol,
+      isLocalhost: window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1",
+      isVercel: window.location.hostname.includes("vercel.app") || window.location.hostname.includes("vercel.com"),
+      isHTTPS: window.location.protocol === "https:",
+      userAgent: navigator.userAgent,
+      isProduction: process.env.NODE_ENV === "production",
+      hasBlobStorage: process.env.BLOB_READ_WRITE_TOKEN ? "✅" : "❌",
+    }
+
+    console.log("🌐 Deployment Environment:", this.deploymentInfo)
   }
 
   private setupUserInteractionListener() {
@@ -51,34 +86,110 @@ class SoundManager {
     const handleFirstInteraction = () => {
       this.userInteracted = true
       console.log("👆 User interaction detected, loading sounds...")
+      console.log("🌐 Environment:", this.deploymentInfo)
       this.preloadSounds()
       document.removeEventListener("click", handleFirstInteraction)
       document.removeEventListener("touchstart", handleFirstInteraction)
+      document.removeEventListener("keydown", handleFirstInteraction)
     }
 
     document.addEventListener("click", handleFirstInteraction)
     document.addEventListener("touchstart", handleFirstInteraction)
+    document.addEventListener("keydown", handleFirstInteraction)
   }
 
   private async checkFileExists(url: string): Promise<boolean> {
     if (!this.isClient) return false
 
     try {
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 8000) // 8 second timeout
+      console.log(`🔍 Checking file existence: ${url}`)
 
-      const response = await fetch(url, {
-        method: "HEAD",
-        signal: controller.signal,
-        cache: "no-cache",
-      })
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 15000) // 15 second timeout for blob storage
+
+      // For Vercel Blob URLs, use a simpler approach
+      if (url.includes("blob.vercel-storage.com")) {
+        try {
+          const response = await fetch(url, {
+            method: "HEAD",
+            signal: controller.signal,
+            cache: "no-cache",
+          })
+          clearTimeout(timeoutId)
+
+          const exists = response.ok && response.status === 200
+          console.log(
+            `🔍 Blob file check: ${url} - ${exists ? "✅ EXISTS" : "❌ NOT FOUND"} (status: ${response.status})`,
+          )
+          return exists
+        } catch (error) {
+          console.warn(`⚠️ Blob file check failed for ${url}:`, error)
+          return false
+        }
+      }
+
+      // For local files, try multiple methods
+      const methods = [
+        // Method 1: HEAD request
+        async () => {
+          const response = await fetch(url, {
+            method: "HEAD",
+            signal: controller.signal,
+            cache: "no-cache",
+            mode: "cors",
+          })
+          return { method: "HEAD", status: response.status, ok: response.ok }
+        },
+        // Method 2: GET request with range header (for audio files)
+        async () => {
+          const response = await fetch(url, {
+            method: "GET",
+            signal: controller.signal,
+            cache: "no-cache",
+            mode: "cors",
+            headers: {
+              Range: "bytes=0-1023", // Just get first 1KB
+            },
+          })
+          return { method: "GET-Range", status: response.status, ok: response.ok }
+        },
+        // Method 3: Simple GET request
+        async () => {
+          const response = await fetch(url, {
+            signal: controller.signal,
+            cache: "no-cache",
+            mode: "cors",
+          })
+          return { method: "GET", status: response.status, ok: response.ok }
+        },
+      ]
+
+      let lastError: any = null
+
+      for (const method of methods) {
+        try {
+          const result = await method()
+          clearTimeout(timeoutId)
+
+          console.log(
+            `🔍 File check result (${result.method}): ${url} - ${result.ok ? "✅ EXISTS" : "❌ NOT FOUND"} (status: ${result.status})`,
+          )
+
+          if (result.ok) {
+            return true
+          }
+        } catch (error) {
+          lastError = error
+          console.warn(`⚠️ File check method failed:`, error)
+          continue
+        }
+      }
 
       clearTimeout(timeoutId)
-      const exists = response.ok && response.status === 200
-      console.log(`🔍 File check for ${url}: ${exists ? "✅ EXISTS" : "❌ NOT FOUND"} (status: ${response.status})`)
-      return exists
+      console.error(`❌ All file check methods failed for ${url}:`, lastError)
+      return false
     } catch (error) {
-      console.warn(`❌ File check failed for ${url}:`, error)
+      console.error(`❌ File check failed for ${url}:`, error)
       return false
     }
   }
@@ -87,6 +198,7 @@ class SoundManager {
     if (!this.isClient) return
 
     console.log("🎵 Starting to preload sounds...")
+    console.log("🌐 Current environment:", this.deploymentInfo)
 
     // First, try to load a fallback sound
     await this.loadFallbackSound()
@@ -96,58 +208,39 @@ class SoundManager {
         await this.loadSound(sound.id, sound.files)
       }
     }
+
+    console.log("🎵 Sound preloading completed")
+    this.logSoundStatus()
+  }
+
+  private logSoundStatus() {
+    console.log("📊 Sound Loading Summary:")
+    this.loadingStatus.forEach((status, soundId) => {
+      const audio = this.audioCache.get(soundId)
+      const error = this.errorDetails.get(soundId)
+      const attempts = this.loadAttempts.get(soundId) || 0
+
+      console.log(`🎵 ${soundId}: ${status} (attempts: ${attempts})${error ? ` - Error: ${error}` : ""}`)
+    })
   }
 
   private async loadFallbackSound() {
     try {
       console.log("🎵 Loading fallback sound...")
-      const fallbackFiles = ["/sounds/goal-commentary.mp3", "/sounds/goal-horn.mp3"]
+
+      // Try blob URLs first, then local files
+      const fallbackFiles = [
+        ...AVAILABLE_SOUNDS.flatMap((sound) => sound.files.filter((file) => file.includes("blob.vercel-storage.com"))),
+        "/sounds/goal-commentary.mp3",
+        "/sounds/goal-horn.mp3",
+      ]
 
       for (const filePath of fallbackFiles) {
         console.log(`🔍 Trying fallback: ${filePath}`)
         const fileExists = await this.checkFileExists(filePath)
         if (fileExists) {
-          const audio = new Audio()
-          audio.volume = this.volume
-          audio.crossOrigin = "anonymous"
-          audio.src = filePath
-
           try {
-            await new Promise<void>((resolve, reject) => {
-              const timeout = setTimeout(() => reject(new Error("Timeout")), 15000)
-
-              const cleanup = () => {
-                clearTimeout(timeout)
-                audio.removeEventListener("canplaythrough", onLoad)
-                audio.removeEventListener("loadeddata", onLoadedData)
-                audio.removeEventListener("error", onError)
-              }
-
-              const onLoad = () => {
-                cleanup()
-                resolve()
-              }
-
-              const onLoadedData = () => {
-                if (audio.readyState >= 2) {
-                  cleanup()
-                  resolve()
-                }
-              }
-
-              const onError = (e: Event) => {
-                cleanup()
-                console.error(`Fallback load error for ${filePath}:`, e)
-                reject(new Error("Load failed"))
-              }
-
-              audio.addEventListener("canplaythrough", onLoad, { once: true })
-              audio.addEventListener("loadeddata", onLoadedData, { once: true })
-              audio.addEventListener("error", onError, { once: true })
-
-              audio.load()
-            })
-
+            const audio = await this.createAudioElement(filePath, `fallback-${filePath.split("/").pop()}`)
             this.fallbackSound = audio
             console.log(`✅ Fallback sound loaded: ${filePath}`)
             break
@@ -156,9 +249,89 @@ class SoundManager {
           }
         }
       }
+
+      if (!this.fallbackSound) {
+        console.warn("⚠️ No fallback sound could be loaded")
+      }
     } catch (error) {
       console.warn("Failed to load any fallback sound:", error)
     }
+  }
+
+  private async createAudioElement(filePath: string, debugId: string): Promise<HTMLAudioElement> {
+    return new Promise((resolve, reject) => {
+      const audio = new Audio()
+
+      // Longer timeout for blob storage
+      const timeoutDuration = filePath.includes("blob.vercel-storage.com") ? 30000 : 25000
+      const timeout = setTimeout(() => {
+        cleanup()
+        reject(new Error(`Audio load timeout (${timeoutDuration / 1000}s) for ${debugId}`))
+      }, timeoutDuration)
+
+      const cleanup = () => {
+        clearTimeout(timeout)
+        audio.removeEventListener("canplaythrough", onLoad)
+        audio.removeEventListener("loadeddata", onLoadedData)
+        audio.removeEventListener("error", onError)
+        audio.removeEventListener("loadstart", onLoadStart)
+        audio.removeEventListener("progress", onProgress)
+      }
+
+      const onLoadStart = () => {
+        console.log(`📥 Started loading audio: ${debugId}`)
+      }
+
+      const onProgress = () => {
+        console.log(`📊 Loading progress: ${debugId} (readyState: ${audio.readyState}/4)`)
+      }
+
+      const onLoad = () => {
+        cleanup()
+        console.log(
+          `✅ Audio loaded successfully: ${debugId} (duration: ${audio.duration?.toFixed(1)}s, readyState: ${audio.readyState})`,
+        )
+        resolve(audio)
+      }
+
+      const onLoadedData = () => {
+        if (audio.readyState >= 2) {
+          // HAVE_CURRENT_DATA or higher
+          cleanup()
+          console.log(`✅ Audio loaded (via loadeddata): ${debugId} (readyState: ${audio.readyState})`)
+          resolve(audio)
+        }
+      }
+
+      const onError = (e: Event) => {
+        cleanup()
+        const errorMsg = `Audio load error: ${audio.error?.code} - ${audio.error?.message || "Unknown audio error"}`
+        console.error(`❌ Failed to load audio: ${debugId}`, errorMsg, e)
+        reject(new Error(errorMsg))
+      }
+
+      // Configure audio element BEFORE setting src
+      audio.volume = this.volume
+      audio.preload = "auto"
+
+      // Don't set crossOrigin for blob URLs as they're same-origin
+      if (!filePath.includes("blob.vercel-storage.com")) {
+        audio.crossOrigin = "anonymous"
+      }
+
+      // Add event listeners
+      audio.addEventListener("loadstart", onLoadStart, { once: true })
+      audio.addEventListener("progress", onProgress)
+      audio.addEventListener("canplaythrough", onLoad, { once: true })
+      audio.addEventListener("loadeddata", onLoadedData, { once: true })
+      audio.addEventListener("error", onError, { once: true })
+
+      console.log(`🎵 Setting audio source: ${debugId} -> ${filePath}`)
+
+      // Set source and start loading
+      audio.src = filePath
+      audio.load() // Explicitly trigger load
+    })
   }
 
   private async loadSound(soundId: string, filePaths: string[], retryCount = 0): Promise<void> {
@@ -172,10 +345,16 @@ class SoundManager {
 
       console.log(`🎵 Loading sound: ${soundId} (attempt ${retryCount + 1}/${maxRetries + 1})`)
 
-      // Try each file format until one works
+      // Prioritize blob URLs over local files
+      const sortedFilePaths = [...filePaths].sort((a, b) => {
+        if (a.includes("blob.vercel-storage.com") && !b.includes("blob.vercel-storage.com")) return -1
+        if (!a.includes("blob.vercel-storage.com") && b.includes("blob.vercel-storage.com")) return 1
+        return 0
+      })
+
       let workingFilePath: string | null = null
 
-      for (const filePath of filePaths) {
+      for (const filePath of sortedFilePaths) {
         console.log(`🔍 Checking file: ${filePath}`)
         const fileExists = await this.checkFileExists(filePath)
 
@@ -199,80 +378,17 @@ class SoundManager {
       }
 
       if (!workingFilePath) {
-        throw new Error(`No playable audio format found for ${soundId}. Checked files: ${filePaths.join(", ")}`)
+        throw new Error(
+          `No playable audio format found for ${soundId}. Checked files: ${sortedFilePaths.join(", ")}. Environment: ${JSON.stringify(this.deploymentInfo)}`,
+        )
       }
 
-      const audio = new Audio()
-
-      // Create a promise that resolves when audio is ready or rejects on error
-      const loadPromise = new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error("Load timeout (20s)"))
-        }, 20000) // 20 second timeout
-
-        const cleanup = () => {
-          clearTimeout(timeout)
-          audio.removeEventListener("canplaythrough", onLoad)
-          audio.removeEventListener("error", onError)
-          audio.removeEventListener("loadeddata", onLoadedData)
-          audio.removeEventListener("loadstart", onLoadStart)
-          audio.removeEventListener("progress", onProgress)
-        }
-
-        const onLoadStart = () => {
-          console.log(`📥 Started loading: ${soundId}`)
-        }
-
-        const onProgress = () => {
-          console.log(`📊 Loading progress: ${soundId} (readyState: ${audio.readyState})`)
-        }
-
-        const onLoad = () => {
-          cleanup()
-          console.log(`✅ Sound loaded successfully: ${soundId} (duration: ${audio.duration}s)`)
-          this.loadingStatus.set(soundId, "loaded")
-          resolve()
-        }
-
-        const onLoadedData = () => {
-          // Fallback if canplaythrough doesn't fire
-          if (audio.readyState >= 2) {
-            cleanup()
-            console.log(`✅ Sound loaded (via loadeddata): ${soundId} (readyState: ${audio.readyState})`)
-            this.loadingStatus.set(soundId, "loaded")
-            resolve()
-          }
-        }
-
-        const onError = (e: Event) => {
-          cleanup()
-          const errorMsg = `Load error: ${audio.error?.code} - ${audio.error?.message || "Unknown audio error"}`
-          console.error(`❌ Failed to load sound: ${soundId}`, errorMsg, e)
-          this.errorDetails.set(soundId, errorMsg)
-          reject(new Error(errorMsg))
-        }
-
-        audio.addEventListener("loadstart", onLoadStart, { once: true })
-        audio.addEventListener("progress", onProgress)
-        audio.addEventListener("canplaythrough", onLoad, { once: true })
-        audio.addEventListener("loadeddata", onLoadedData, { once: true })
-        audio.addEventListener("error", onError, { once: true })
-      })
-
-      // Configure audio element
-      audio.volume = this.volume
-      audio.preload = "auto"
-      audio.crossOrigin = "anonymous"
-
-      console.log(`🎵 Setting source for ${soundId}: ${workingFilePath}`)
-
-      // Set source and start loading
-      audio.src = workingFilePath
-      audio.load() // Explicitly trigger load
-
-      await loadPromise
+      const audio = await this.createAudioElement(workingFilePath, soundId)
       this.audioCache.set(soundId, audio)
-      console.log(`🎵 Successfully cached sound: ${soundId}`)
+      this.loadingStatus.set(soundId, "loaded")
+      console.log(
+        `🎵 Successfully cached sound: ${soundId} from ${workingFilePath.includes("blob.vercel-storage.com") ? "Blob Storage" : "Local"}`,
+      )
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : "Unknown error"
       console.error(`❌ Failed to load sound: ${soundId}`, errorMsg)
@@ -282,11 +398,15 @@ class SoundManager {
       // Try to use fallback for failed sounds
       if (this.fallbackSound && soundId !== "commentary") {
         console.log(`🔄 Using fallback sound for: ${soundId}`)
-        const fallbackAudio = this.fallbackSound.cloneNode() as HTMLAudioElement
-        fallbackAudio.volume = this.volume
-        this.audioCache.set(soundId, fallbackAudio)
-        this.loadingStatus.set(soundId, "loaded")
-        return
+        try {
+          const fallbackAudio = this.fallbackSound.cloneNode() as HTMLAudioElement
+          fallbackAudio.volume = this.volume
+          this.audioCache.set(soundId, fallbackAudio)
+          this.loadingStatus.set(soundId, "loaded")
+          return
+        } catch (cloneError) {
+          console.error(`❌ Failed to clone fallback sound:`, cloneError)
+        }
       }
 
       // Retry logic
@@ -337,19 +457,15 @@ class SoundManager {
     return stored !== null ? Number.parseFloat(stored) : 0.7
   }
 
-  // Add method to update player assignments in the SoundManager class
   updatePlayerAssignments(assignments: Record<string, SoundType>) {
-    // Store the assignments for use in sound selection
     this.playerAssignments = assignments
     console.log("🎵 Updated player sound assignments:", assignments)
   }
 
-  // Update the getPlayerSound method to use dynamic assignments
   getPlayerSound(playerName: string, team: "yellow" | "blue"): SoundType {
     return this.playerAssignments[playerName] || TEAM_DEFAULT_SOUNDS[team]
   }
 
-  // Update playGoalSound method to use dynamic assignments
   async playGoalSound(playerName: string, team: "yellow" | "blue") {
     if (!this.isClient || !this.enabled) {
       console.log("🔇 Sounds disabled or not in browser, skipping playback")
@@ -362,33 +478,25 @@ class SoundManager {
     }
 
     try {
-      // Use dynamic assignments instead of static PLAYER_SOUNDS
       const soundType = this.playerAssignments[playerName] || TEAM_DEFAULT_SOUNDS[team]
       console.log(`🎵 Playing goal sound for ${playerName} (${team}): ${soundType}`)
+      console.log(`🌐 Environment: ${JSON.stringify(this.deploymentInfo)}`)
 
       const audio = this.audioCache.get(soundType)
       const status = this.loadingStatus.get(soundType)
 
+      console.log(`🎵 Audio status: ${status}, hasAudio: ${!!audio}, readyState: ${audio?.readyState}`)
+
       if (!audio) {
         console.error(`❌ Audio not found for sound type: ${soundType}`)
-        // Try fallback sound
-        if (this.fallbackSound) {
-          console.log("🔄 Using fallback sound")
-          this.fallbackSound.currentTime = 0
-          await this.fallbackSound.play()
-        }
+        await this.tryFallbackSound("Audio not found")
         return
       }
 
       if (status === "error") {
         const errorDetail = this.errorDetails.get(soundType)
         console.error(`❌ Sound failed to load: ${soundType} - ${errorDetail}`)
-        // Try fallback sound
-        if (this.fallbackSound) {
-          console.log("🔄 Using fallback sound due to error")
-          this.fallbackSound.currentTime = 0
-          await this.fallbackSound.play()
-        }
+        await this.tryFallbackSound("Sound load error")
         return
       }
 
@@ -399,6 +507,8 @@ class SoundManager {
 
       // Reset audio to beginning and play
       audio.currentTime = 0
+
+      console.log(`🎵 Attempting to play sound: ${soundType}`)
       const playPromise = audio.play()
 
       if (playPromise !== undefined) {
@@ -407,16 +517,22 @@ class SoundManager {
       }
     } catch (error) {
       console.error("❌ Failed to play goal sound:", error)
-      // Try fallback sound as last resort
-      if (this.fallbackSound) {
-        try {
-          console.log("🔄 Using fallback sound as last resort")
-          this.fallbackSound.currentTime = 0
-          await this.fallbackSound.play()
-        } catch (fallbackError) {
-          console.error("❌ Even fallback sound failed:", fallbackError)
-        }
+      await this.tryFallbackSound("Play error")
+    }
+  }
+
+  private async tryFallbackSound(reason: string) {
+    if (this.fallbackSound) {
+      try {
+        console.log(`🔄 Using fallback sound (${reason})`)
+        this.fallbackSound.currentTime = 0
+        await this.fallbackSound.play()
+        console.log("✅ Fallback sound played successfully")
+      } catch (fallbackError) {
+        console.error("❌ Even fallback sound failed:", fallbackError)
       }
+    } else {
+      console.error("❌ No fallback sound available")
     }
   }
 
@@ -425,7 +541,6 @@ class SoundManager {
 
     if (!this.userInteracted) {
       console.log("⚠️ No user interaction yet, cannot preview sound")
-      // Try to load sounds if user is interacting now
       this.preloadSounds()
       return
     }
@@ -437,24 +552,14 @@ class SoundManager {
 
       if (!audio) {
         console.error(`❌ Audio not found for preview: ${soundType}`)
-        // Try fallback sound
-        if (this.fallbackSound) {
-          console.log("🔄 Using fallback sound for preview")
-          this.fallbackSound.currentTime = 0
-          await this.fallbackSound.play()
-        }
+        await this.tryFallbackSound("Preview - audio not found")
         return
       }
 
       if (status === "error") {
         const errorDetail = this.errorDetails.get(soundType)
         console.error(`❌ Sound failed to load: ${soundType} - ${errorDetail}`)
-        // Try fallback sound
-        if (this.fallbackSound) {
-          console.log("🔄 Using fallback sound for preview due to error")
-          this.fallbackSound.currentTime = 0
-          await this.fallbackSound.play()
-        }
+        await this.tryFallbackSound("Preview - load error")
         return
       }
 
@@ -487,7 +592,6 @@ class SoundManager {
       }
     })
 
-    // Also stop fallback sound
     if (this.fallbackSound && !this.fallbackSound.paused) {
       console.log("🛑 Stopping fallback sound")
       this.fallbackSound.pause()
@@ -523,7 +627,6 @@ class SoundManager {
     }
   }
 
-  // Debug method to check sound status
   getSoundStatus() {
     const status: Record<string, any> = {
       enabled: this.enabled,
@@ -532,6 +635,7 @@ class SoundManager {
       isClient: this.isClient,
       hasFallback: !!this.fallbackSound,
       fallbackSrc: this.fallbackSound?.src || "none",
+      deploymentInfo: this.deploymentInfo,
       audioSupport: this.getAudioSupport(),
       sounds: {},
     }
@@ -556,7 +660,6 @@ class SoundManager {
     return status
   }
 
-  // Method to force reload sounds (for debugging)
   async forceReloadSounds() {
     if (!this.isClient) return
 
@@ -574,7 +677,6 @@ class SoundManager {
     }
   }
 
-  // Get loading progress
   getLoadingProgress() {
     const totalSounds = AVAILABLE_SOUNDS.filter((s) => s.files.length > 0).length
     const loadedSounds = Array.from(this.loadingStatus.values()).filter((status) => status === "loaded").length
@@ -582,10 +684,8 @@ class SoundManager {
   }
 }
 
-// Create sound manager instance only on client side
 export const soundManager = typeof window !== "undefined" ? new SoundManager() : null
 
-// Make soundManager available globally for debugging (client-side only)
 if (typeof window !== "undefined" && soundManager) {
   ;(window as any).soundManager = soundManager
 }
