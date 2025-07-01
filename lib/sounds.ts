@@ -1,14 +1,14 @@
-// Sound management utilities
-export type SoundType = "commentary" | "horn" | "none"
+// Sound management utilities - now supports custom sounds
+export type SoundType = string // Changed from union to string for flexibility
 
-// Updated to use Vercel Blob URLs for reliable hosting
-export const AVAILABLE_SOUNDS: { id: SoundType; name: string; files: string[] }[] = [
+// Base sounds that come with the app
+export const BASE_SOUNDS: { id: string; name: string; files: string[] }[] = [
   { id: "none", name: "Brak dźwięku", files: [] },
   {
     id: "commentary",
     name: "Komentarz",
     files: [
-      "https://blob.vercel-storage.com/goal-commentary-[BLOB_ID].mp3", // Will be replaced with actual blob URL
+      "https://9khsqqthqxvjkwqf.public.blob.vercel-storage.com/Cs-1.6-HeadShot-Sound-Effect.mp3",
       "/sounds/goal-commentary.mp3", // Fallback to local file
     ],
   },
@@ -16,15 +16,20 @@ export const AVAILABLE_SOUNDS: { id: SoundType; name: string; files: string[] }[
     id: "horn",
     name: "Żółci Klakson",
     files: [
-      "https://blob.vercel-storage.com/goal-horn-[BLOB_ID].mp3", // Will be replaced with actual blob URL
+      "https://9khsqqthqxvjkwqf.public.blob.vercel-storage.com/Cs-1.6-HeadShot-Sound-Effect.mp3",
       "/sounds/goal-horn.mp3", // Fallback to local file
     ],
   },
 ]
 
-// Clear all player-specific sound mappings - now empty by default
-export const PLAYER_SOUNDS: Record<string, SoundType> = {
-  // Players can now be assigned sounds through the app interface
+// Custom sound interface
+export interface CustomSound {
+  id: string
+  name: string
+  url: string
+  uploadedAt: string
+  fileSize?: number
+  originalName?: string
 }
 
 // Team-based default sounds
@@ -45,6 +50,7 @@ class SoundManager {
   private fallbackSound: HTMLAudioElement | null = null
   private playerAssignments: Record<string, SoundType> = {}
   private deploymentInfo: any = {}
+  private customSounds: CustomSound[] = []
 
   constructor() {
     // Only run client-side code when in browser
@@ -54,6 +60,7 @@ class SoundManager {
       // Initialize client-side settings
       this.enabled = this.isEnabled()
       this.volume = this.getVolume()
+      this.loadCustomSounds()
 
       // Detect deployment environment
       this.detectDeploymentEnvironment()
@@ -61,6 +68,143 @@ class SoundManager {
       // Wait for user interaction before preloading sounds
       this.setupUserInteractionListener()
     }
+  }
+
+  private loadCustomSounds() {
+    if (!this.isClient) return
+
+    try {
+      const saved = localStorage.getItem("football-custom-sounds")
+      if (saved) {
+        this.customSounds = JSON.parse(saved)
+        console.log(`🎵 Loaded ${this.customSounds.length} custom sounds from storage`)
+      }
+    } catch (error) {
+      console.error("Failed to load custom sounds:", error)
+      this.customSounds = []
+    }
+  }
+
+  private saveCustomSounds() {
+    if (!this.isClient) return
+
+    try {
+      localStorage.setItem("football-custom-sounds", JSON.stringify(this.customSounds))
+      console.log(`🎵 Saved ${this.customSounds.length} custom sounds to storage`)
+    } catch (error) {
+      console.error("Failed to save custom sounds:", error)
+    }
+  }
+
+  // Get all available sounds (base + custom)
+  getAllAvailableSounds(): { id: string; name: string; files: string[]; isCustom?: boolean }[] {
+    const baseSounds = BASE_SOUNDS.map((sound) => ({ ...sound, isCustom: false }))
+    const customSoundEntries = this.customSounds.map((sound) => ({
+      id: sound.id,
+      name: sound.name,
+      files: [sound.url],
+      isCustom: true,
+    }))
+
+    return [...baseSounds, ...customSoundEntries]
+  }
+
+  // Add a custom sound
+  async addCustomSound(file: File): Promise<{ success: boolean; sound?: CustomSound; error?: string }> {
+    if (!this.isClient) {
+      return { success: false, error: "Not in browser environment" }
+    }
+
+    try {
+      // Validate file
+      if (!file.type.startsWith("audio/")) {
+        return { success: false, error: "File must be an audio file" }
+      }
+
+      if (file.size > 10 * 1024 * 1024) {
+        // 10MB limit
+        return { success: false, error: "File size must be less than 10MB" }
+      }
+
+      console.log(`📤 Uploading custom sound: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB)`)
+
+      // Upload to Vercel Blob
+      const formData = new FormData()
+      formData.append("file", file)
+
+      const response = await fetch("/api/upload-sound", {
+        method: "POST",
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        return { success: false, error: error.error || "Upload failed" }
+      }
+
+      const result = await response.json()
+
+      // Create custom sound entry
+      const customSound: CustomSound = {
+        id: `custom_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        name: file.name.replace(/\.[^/.]+$/, ""), // Remove extension
+        url: result.url,
+        uploadedAt: new Date().toISOString(),
+        fileSize: file.size,
+        originalName: file.name,
+      }
+
+      // Add to custom sounds
+      this.customSounds.push(customSound)
+      this.saveCustomSounds()
+
+      // Preload the new sound
+      await this.loadSound(customSound.id, [customSound.url])
+
+      console.log(`✅ Custom sound added: ${customSound.name}`)
+      return { success: true, sound: customSound }
+    } catch (error) {
+      console.error("Failed to add custom sound:", error)
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      }
+    }
+  }
+
+  // Remove a custom sound
+  removeCustomSound(soundId: string): boolean {
+    if (!this.isClient) return false
+
+    const index = this.customSounds.findIndex((sound) => sound.id === soundId)
+    if (index === -1) return false
+
+    const sound = this.customSounds[index]
+
+    // Remove from arrays
+    this.customSounds.splice(index, 1)
+    this.saveCustomSounds()
+
+    // Remove from cache
+    this.audioCache.delete(soundId)
+    this.loadingStatus.delete(soundId)
+    this.errorDetails.delete(soundId)
+
+    // Remove from player assignments
+    Object.keys(this.playerAssignments).forEach((player) => {
+      if (this.playerAssignments[player] === soundId) {
+        delete this.playerAssignments[player]
+      }
+    })
+    this.savePlayerAssignments()
+
+    console.log(`🗑️ Removed custom sound: ${sound.name}`)
+    return true
+  }
+
+  // Get custom sounds
+  getCustomSounds(): CustomSound[] {
+    return [...this.customSounds]
   }
 
   private detectDeploymentEnvironment() {
@@ -203,7 +347,9 @@ class SoundManager {
     // First, try to load a fallback sound
     await this.loadFallbackSound()
 
-    for (const sound of AVAILABLE_SOUNDS) {
+    // Load all available sounds (base + custom)
+    const allSounds = this.getAllAvailableSounds()
+    for (const sound of allSounds) {
       if (sound.files.length > 0) {
         await this.loadSound(sound.id, sound.files)
       }
@@ -229,8 +375,9 @@ class SoundManager {
       console.log("🎵 Loading fallback sound...")
 
       // Try blob URLs first, then local files
+      const allSounds = this.getAllAvailableSounds()
       const fallbackFiles = [
-        ...AVAILABLE_SOUNDS.flatMap((sound) => sound.files.filter((file) => file.includes("blob.vercel-storage.com"))),
+        ...allSounds.flatMap((sound) => sound.files.filter((file) => file.includes("blob.vercel-storage.com"))),
         "/sounds/goal-commentary.mp3",
         "/sounds/goal-horn.mp3",
       ]
@@ -459,7 +606,13 @@ class SoundManager {
 
   updatePlayerAssignments(assignments: Record<string, SoundType>) {
     this.playerAssignments = assignments
+    this.savePlayerAssignments()
     console.log("🎵 Updated player sound assignments:", assignments)
+  }
+
+  private savePlayerAssignments() {
+    if (!this.isClient) return
+    localStorage.setItem("football-player-sounds", JSON.stringify(this.playerAssignments))
   }
 
   getPlayerSound(playerName: string, team: "yellow" | "blue"): SoundType {
@@ -637,6 +790,7 @@ class SoundManager {
       fallbackSrc: this.fallbackSound?.src || "none",
       deploymentInfo: this.deploymentInfo,
       audioSupport: this.getAudioSupport(),
+      customSoundsCount: this.customSounds.length,
       sounds: {},
     }
 
@@ -678,7 +832,8 @@ class SoundManager {
   }
 
   getLoadingProgress() {
-    const totalSounds = AVAILABLE_SOUNDS.filter((s) => s.files.length > 0).length
+    const allSounds = this.getAllAvailableSounds()
+    const totalSounds = allSounds.filter((s) => s.files.length > 0).length
     const loadedSounds = Array.from(this.loadingStatus.values()).filter((status) => status === "loaded").length
     return { loaded: loadedSounds, total: totalSounds }
   }
