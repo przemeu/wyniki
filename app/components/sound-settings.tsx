@@ -178,6 +178,20 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
                   <RefreshCw className="w-3 h-3 mr-1" />
                   Przeładuj Dźwięki
                 </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    AVAILABLE_SOUNDS.filter((s) => s.files.length > 0).forEach((sound) => {
+                      setTimeout(() => handlePreviewSound(sound.id), Math.random() * 2000)
+                    })
+                  }}
+                  className="text-xs bg-transparent"
+                  disabled={!soundEnabled}
+                >
+                  <Play className="w-3 h-3 mr-1" />
+                  Test Wszystkich
+                </Button>
               </div>
 
               {showDebug && debugInfo && (
@@ -188,6 +202,16 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
                   <div>Interakcja użytkownika: {debugInfo.userInteracted ? "✅" : "❌"}</div>
                   <div>Środowisko: {debugInfo.isClient ? "Przeglądarka ✅" : "Serwer ❌"}</div>
 
+                  {debugInfo.audioSupport && (
+                    <>
+                      <div className="font-semibold mt-3 mb-2">Wsparcie Audio:</div>
+                      <div>MP3: {debugInfo.audioSupport.mp3 || "❌"}</div>
+                      <div>OGG: {debugInfo.audioSupport.ogg || "❌"}</div>
+                      <div>WAV: {debugInfo.audioSupport.wav || "❌"}</div>
+                      <div>M4A: {debugInfo.audioSupport.m4a || "❌"}</div>
+                    </>
+                  )}
+
                   <div className="font-semibold mt-3 mb-2">Dźwięki:</div>
                   {Object.entries(debugInfo.sounds).map(([id, info]: [string, any]) => (
                     <div key={id} className="mb-2 p-2 bg-white rounded">
@@ -196,6 +220,12 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
                         <span className="font-medium">{id}</span>
                         <span className="text-gray-500">({info.loadStatus})</span>
                       </div>
+                      <div className="text-xs text-gray-600 mt-1">
+                        ReadyState: {info.readyState}/4 | Duration: {info.duration?.toFixed(1) || 0}s
+                      </div>
+                      {info.src && info.src !== "none" && (
+                        <div className="text-xs text-gray-500 mt-1 break-all">Źródło: {info.src.split("/").pop()}</div>
+                      )}
                       {info.error && <div className="text-red-600 text-xs mt-1">❌ {info.error}</div>}
                       {info.attempts > 1 && (
                         <div className="text-yellow-600 text-xs mt-1">🔄 Próby: {info.attempts}</div>

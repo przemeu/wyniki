@@ -1,15 +1,19 @@
 // Sound management utilities
 export type SoundType = "default" | "commentary" | "whistle" | "cheer" | "horn" | "bell" | "yellow-horn" | "none"
 
-export const AVAILABLE_SOUNDS: { id: SoundType; name: string; file: string }[] = [
-  { id: "none", name: "Brak dźwięku", file: "" },
-  { id: "commentary", name: "Komentarz", file: "/sounds/goal-commentary.mp3" },
-  { id: "yellow-horn", name: "Klakson Żółtych", file: "/sounds/goal-yellow-horn.mp3" },
-  { id: "default", name: "Domyślny", file: "/sounds/goal-default.mp3" },
-  { id: "whistle", name: "Gwizdek", file: "/sounds/goal-whistle.mp3" },
-  { id: "cheer", name: "Okrzyki", file: "/sounds/goal-cheer.mp3" },
-  { id: "horn", name: "Klakson", file: "/sounds/goal-horn.mp3" },
-  { id: "bell", name: "Dzwon", file: "/sounds/goal-bell.mp3" },
+export const AVAILABLE_SOUNDS: { id: SoundType; name: string; files: string[] }[] = [
+  { id: "none", name: "Brak dźwięku", files: [] },
+  { id: "commentary", name: "Komentarz", files: ["/sounds/goal-commentary.mp3", "/sounds/goal-commentary.ogg"] },
+  {
+    id: "yellow-horn",
+    name: "Klakson Żółtych",
+    files: ["/sounds/goal-yellow-horn.mp3", "/sounds/goal-yellow-horn.ogg"],
+  },
+  { id: "default", name: "Domyślny", files: ["/sounds/goal-default.mp3", "/sounds/goal-default.ogg"] },
+  { id: "whistle", name: "Gwizdek", files: ["/sounds/goal-whistle.mp3", "/sounds/goal-whistle.ogg"] },
+  { id: "cheer", name: "Okrzyki", files: ["/sounds/goal-cheer.mp3", "/sounds/goal-cheer.ogg"] },
+  { id: "horn", name: "Klakson", files: ["/sounds/goal-horn.mp3", "/sounds/goal-horn.ogg"] },
+  { id: "bell", name: "Dzwon", files: ["/sounds/goal-bell.mp3", "/sounds/goal-bell.ogg"] },
 ]
 
 // Player-specific sound mappings (can be expanded)
@@ -73,9 +77,19 @@ class SoundManager {
     if (!this.isClient) return false
 
     try {
-      const response = await fetch(url, { method: "HEAD" })
-      return response.ok
-    } catch {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 5000) // 5 second timeout
+
+      const response = await fetch(url, {
+        method: "HEAD",
+        signal: controller.signal,
+        cache: "no-cache",
+      })
+
+      clearTimeout(timeoutId)
+      return response.ok && response.status === 200
+    } catch (error) {
+      console.warn(`File check failed for ${url}:`, error)
       return false
     }
   }
@@ -86,14 +100,14 @@ class SoundManager {
     console.log("🎵 Starting to preload sounds...")
 
     for (const sound of AVAILABLE_SOUNDS) {
-      if (sound.file) {
-        await this.loadSound(sound.id, sound.file)
+      if (sound.files.length > 0) {
+        await this.loadSound(sound.id, sound.files)
       }
     }
   }
 
-  private async loadSound(soundId: string, filePath: string, retryCount = 0): Promise<void> {
-    if (!this.isClient) return
+  private async loadSound(soundId: string, filePaths: string[], retryCount = 0): Promise<void> {
+    if (!this.isClient || filePaths.length === 0) return
 
     const maxRetries = 2
 
@@ -101,12 +115,34 @@ class SoundManager {
       this.loadingStatus.set(soundId, "loading")
       this.loadAttempts.set(soundId, (this.loadAttempts.get(soundId) || 0) + 1)
 
-      console.log(`🎵 Loading sound: ${soundId} from ${filePath} (attempt ${retryCount + 1})`)
+      console.log(`🎵 Loading sound: ${soundId} (attempt ${retryCount + 1})`)
 
-      // First check if file exists
-      const fileExists = await this.checkFileExists(filePath)
-      if (!fileExists) {
-        throw new Error(`File not found: ${filePath}`)
+      // Try each file format until one works
+      let workingFilePath: string | null = null
+
+      for (const filePath of filePaths) {
+        console.log(`🔍 Checking file: ${filePath}`)
+        const fileExists = await this.checkFileExists(filePath)
+
+        if (fileExists) {
+          // Test if browser can play this format
+          const audio = new Audio()
+          const canPlay = audio.canPlayType(this.getMimeType(filePath))
+
+          if (canPlay !== "") {
+            workingFilePath = filePath
+            console.log(`✅ Found working format: ${filePath} (canPlay: ${canPlay})`)
+            break
+          } else {
+            console.log(`⚠️ Browser can't play format: ${filePath}`)
+          }
+        } else {
+          console.log(`❌ File not found: ${filePath}`)
+        }
+      }
+
+      if (!workingFilePath) {
+        throw new Error(`No playable audio format found for ${soundId}`)
       }
 
       const audio = new Audio()
@@ -114,37 +150,54 @@ class SoundManager {
       // Create a promise that resolves when audio is ready or rejects on error
       const loadPromise = new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
-          reject(new Error("Load timeout"))
-        }, 10000) // 10 second timeout
+          reject(new Error("Load timeout (15s)"))
+        }, 15000) // 15 second timeout
 
-        audio.addEventListener(
-          "canplaythrough",
-          () => {
-            clearTimeout(timeout)
-            console.log(`✅ Sound loaded successfully: ${soundId}`)
+        const cleanup = () => {
+          clearTimeout(timeout)
+          audio.removeEventListener("canplaythrough", onLoad)
+          audio.removeEventListener("error", onError)
+          audio.removeEventListener("loadeddata", onLoadedData)
+        }
+
+        const onLoad = () => {
+          cleanup()
+          console.log(`✅ Sound loaded successfully: ${soundId}`)
+          this.loadingStatus.set(soundId, "loaded")
+          resolve()
+        }
+
+        const onLoadedData = () => {
+          // Fallback if canplaythrough doesn't fire
+          if (audio.readyState >= 2) {
+            cleanup()
+            console.log(`✅ Sound loaded (via loadeddata): ${soundId}`)
             this.loadingStatus.set(soundId, "loaded")
             resolve()
-          },
-          { once: true },
-        )
+          }
+        }
 
-        audio.addEventListener(
-          "error",
-          (e) => {
-            clearTimeout(timeout)
-            const errorMsg = `Load error: ${e.type} - ${audio.error?.message || "Unknown error"}`
-            console.error(`❌ Failed to load sound: ${soundId}`, errorMsg)
-            this.errorDetails.set(soundId, errorMsg)
-            reject(new Error(errorMsg))
-          },
-          { once: true },
-        )
+        const onError = (e: Event) => {
+          cleanup()
+          const errorMsg = `Load error: ${audio.error?.code} - ${audio.error?.message || "Unknown audio error"}`
+          console.error(`❌ Failed to load sound: ${soundId}`, errorMsg, e)
+          this.errorDetails.set(soundId, errorMsg)
+          reject(new Error(errorMsg))
+        }
+
+        audio.addEventListener("canplaythrough", onLoad, { once: true })
+        audio.addEventListener("loadeddata", onLoadedData, { once: true })
+        audio.addEventListener("error", onError, { once: true })
       })
 
+      // Configure audio element
       audio.volume = this.volume
       audio.preload = "auto"
-      audio.crossOrigin = "anonymous" // Handle CORS issues
-      audio.src = filePath
+      audio.crossOrigin = "anonymous"
+
+      // Set source and start loading
+      audio.src = workingFilePath
+      audio.load() // Explicitly trigger load
 
       await loadPromise
       this.audioCache.set(soundId, audio)
@@ -156,9 +209,9 @@ class SoundManager {
 
       // Retry logic
       if (retryCount < maxRetries) {
-        console.log(`Retrying sound load: ${soundId} (${retryCount + 1}/${maxRetries})`)
-        await new Promise((resolve) => setTimeout(resolve, 1000)) // Wait 1 second
-        return this.loadSound(soundId, filePath, retryCount + 1)
+        console.log(`🔄 Retrying sound load: ${soundId} (${retryCount + 1}/${maxRetries})`)
+        await new Promise((resolve) => setTimeout(resolve, 2000)) // Wait 2 seconds
+        return this.loadSound(soundId, filePaths, retryCount + 1)
       }
     }
   }
@@ -306,6 +359,34 @@ class SoundManager {
     return PLAYER_SOUNDS[playerName] || TEAM_DEFAULT_SOUNDS[team]
   }
 
+  private getMimeType(filePath: string): string {
+    const extension = filePath.split(".").pop()?.toLowerCase()
+    switch (extension) {
+      case "mp3":
+        return "audio/mpeg"
+      case "ogg":
+        return "audio/ogg"
+      case "wav":
+        return "audio/wav"
+      case "m4a":
+        return "audio/mp4"
+      default:
+        return "audio/mpeg"
+    }
+  }
+
+  getAudioSupport() {
+    if (!this.isClient) return {}
+
+    const audio = new Audio()
+    return {
+      mp3: audio.canPlayType("audio/mpeg"),
+      ogg: audio.canPlayType("audio/ogg"),
+      wav: audio.canPlayType("audio/wav"),
+      m4a: audio.canPlayType("audio/mp4"),
+    }
+  }
+
   // Debug method to check sound status
   getSoundStatus() {
     const status: Record<string, any> = {
@@ -313,6 +394,7 @@ class SoundManager {
       volume: this.volume,
       userInteracted: this.userInteracted,
       isClient: this.isClient,
+      audioSupport: this.getAudioSupport(),
       sounds: {},
     }
 
@@ -325,9 +407,11 @@ class SoundManager {
         loadStatus,
         hasAudio: !!audio,
         canPlay: audio ? audio.readyState >= 2 : false,
+        readyState: audio?.readyState || 0,
         src: audio?.src || "none",
         error: errorDetail || null,
         attempts,
+        duration: audio?.duration || 0,
       }
     })
 
@@ -353,7 +437,7 @@ class SoundManager {
 
   // Get loading progress
   getLoadingProgress() {
-    const totalSounds = AVAILABLE_SOUNDS.filter((s) => s.file).length
+    const totalSounds = AVAILABLE_SOUNDS.filter((s) => s.files).length
     const loadedSounds = Array.from(this.loadingStatus.values()).filter((status) => status === "loaded").length
     return { loaded: loadedSounds, total: totalSounds }
   }
