@@ -32,10 +32,39 @@ export interface CustomSound {
   originalName?: string
 }
 
-// Team-based default sounds
-export const TEAM_DEFAULT_SOUNDS: Record<string, SoundType> = {
-  yellow: "horn", // Żółci Klakson for yellow team
-  blue: "commentary", // Komentarz for blue team
+// Team-based default sounds - now configurable
+export const getTeamDefaultSounds = (): Record<string, SoundType> => {
+  if (typeof window === "undefined") {
+    return {
+      yellow: "horn",
+      blue: "commentary",
+    }
+  }
+
+  try {
+    const saved = localStorage.getItem("football-team-sounds")
+    if (saved) {
+      return JSON.parse(saved)
+    }
+  } catch (error) {
+    console.error("Failed to load team sound settings:", error)
+  }
+
+  return {
+    yellow: "horn",
+    blue: "commentary",
+  }
+}
+
+export const saveTeamDefaultSounds = (teamSounds: Record<string, SoundType>) => {
+  if (typeof window === "undefined") return
+
+  try {
+    localStorage.setItem("football-team-sounds", JSON.stringify(teamSounds))
+    console.log("🎵 Saved team sound settings:", teamSounds)
+  } catch (error) {
+    console.error("Failed to save team sound settings:", error)
+  }
 }
 
 class SoundManager {
@@ -616,7 +645,7 @@ class SoundManager {
   }
 
   getPlayerSound(playerName: string, team: "yellow" | "blue"): SoundType {
-    return this.playerAssignments[playerName] || TEAM_DEFAULT_SOUNDS[team]
+    return this.playerAssignments[playerName] || getTeamDefaultSounds()[team]
   }
 
   async playGoalSound(playerName: string, team: "yellow" | "blue") {
@@ -631,7 +660,7 @@ class SoundManager {
     }
 
     try {
-      const soundType = this.playerAssignments[playerName] || TEAM_DEFAULT_SOUNDS[team]
+      const soundType = this.playerAssignments[playerName] || getTeamDefaultSounds()[team]
       console.log(`🎵 Playing goal sound for ${playerName} (${team}): ${soundType}`)
       console.log(`🌐 Environment: ${JSON.stringify(this.deploymentInfo)}`)
 
@@ -836,6 +865,11 @@ class SoundManager {
     const totalSounds = allSounds.filter((s) => s.files.length > 0).length
     const loadedSounds = Array.from(this.loadingStatus.values()).filter((status) => status === "loaded").length
     return { loaded: loadedSounds, total: totalSounds }
+  }
+
+  updateTeamDefaultSounds(teamSounds: Record<string, SoundType>) {
+    saveTeamDefaultSounds(teamSounds)
+    console.log("🎵 Updated team default sounds:", teamSounds)
   }
 }
 

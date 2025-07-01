@@ -25,7 +25,14 @@ import {
   Trash2,
   Music,
 } from "lucide-react"
-import { soundManager, BASE_SOUNDS, TEAM_DEFAULT_SOUNDS, type SoundType, type CustomSound } from "@/lib/sounds"
+import {
+  soundManager,
+  BASE_SOUNDS,
+  getTeamDefaultSounds,
+  saveTeamDefaultSounds,
+  type SoundType,
+  type CustomSound,
+} from "@/lib/sounds"
 
 interface SoundSettingsProps {
   open: boolean
@@ -63,6 +70,13 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
   const [showPlayerAssignments, setShowPlayerAssignments] = useState(false)
   const [selectedPlayerForSound, setSelectedPlayerForSound] = useState<string | null>(null)
 
+  // Team sound assignment states
+  const [teamSounds, setTeamSounds] = useState<Record<string, SoundType>>({
+    yellow: "horn",
+    blue: "commentary",
+  })
+  const [showTeamSoundSettings, setShowTeamSoundSettings] = useState(false)
+
   useEffect(() => {
     if (soundManager) {
       setSoundEnabled(soundManager.isEnabled())
@@ -80,6 +94,10 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
           console.error("Failed to load player sound assignments:", error)
         }
       }
+
+      // Load team sound settings
+      const teamSoundSettings = getTeamDefaultSounds()
+      setTeamSounds(teamSoundSettings)
 
       // Update loading progress periodically
       const interval = setInterval(() => {
@@ -148,6 +166,14 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
     setPlayerSoundAssignments(assignments)
     localStorage.setItem("football-player-sounds", JSON.stringify(assignments))
     soundManager?.updatePlayerAssignments(assignments)
+  }
+
+  // Handle team sound assignment
+  const handleTeamSoundChange = (team: string, soundId: SoundType) => {
+    const newTeamSounds = { ...teamSounds, [team]: soundId }
+    setTeamSounds(newTeamSounds)
+    saveTeamDefaultSounds(newTeamSounds)
+    soundManager?.updateTeamDefaultSounds(newTeamSounds)
   }
 
   // Assign sound to player
@@ -506,43 +532,134 @@ export default function SoundSettings({ open, onOpenChange }: SoundSettingsProps
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                <div className="flex items-center justify-between p-3 bg-yellow-50 rounded border-l-4 border-yellow-400">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-yellow-700">🟡 Żółci</span>
-                    <span className="text-xs text-gray-600">
-                      ({getAllAvailableSounds().find((s) => s.id === TEAM_DEFAULT_SOUNDS.yellow)?.name})
-                    </span>
-                  </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Konfiguracja Dźwięków Drużyn</span>
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => handlePreviewSound(TEAM_DEFAULT_SOUNDS.yellow)}
-                    disabled={!soundEnabled}
-                    className="text-xs px-2 py-1"
+                    onClick={() => setShowTeamSoundSettings(!showTeamSoundSettings)}
+                    className="text-xs"
                   >
-                    <Play className="w-3 h-3 mr-1" />
-                    Test
+                    {showTeamSoundSettings ? "Ukryj" : "Zmień"}
                   </Button>
                 </div>
 
-                <div className="flex items-center justify-between p-3 bg-blue-50 rounded border-l-4 border-blue-500">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-blue-700">🔵 Niebiescy</span>
-                    <span className="text-xs text-gray-600">
-                      ({getAllAvailableSounds().find((s) => s.id === TEAM_DEFAULT_SOUNDS.blue)?.name})
-                    </span>
+                {showTeamSoundSettings ? (
+                  <div className="space-y-4">
+                    {/* Yellow Team Sound Selection */}
+                    <div className="p-3 bg-yellow-50 rounded border-l-4 border-yellow-400">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-medium text-yellow-700">🟡 Żółci</span>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handlePreviewSound(teamSounds.yellow)}
+                          disabled={!soundEnabled}
+                          className="text-xs px-2 py-1"
+                        >
+                          <Play className="w-3 h-3 mr-1" />
+                          Test
+                        </Button>
+                      </div>
+                      <select
+                        value={teamSounds.yellow}
+                        onChange={(e) => handleTeamSoundChange("yellow", e.target.value)}
+                        className="w-full p-2 border rounded text-sm"
+                      >
+                        {getAllAvailableSounds()
+                          .filter((sound) => sound.id !== "none")
+                          .map((sound) => (
+                            <option key={sound.id} value={sound.id}>
+                              {sound.isCustom ? "🎵 " : ""}
+                              {sound.name}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+
+                    {/* Blue Team Sound Selection */}
+                    <div className="p-3 bg-blue-50 rounded border-l-4 border-blue-500">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-medium text-blue-700">🔵 Niebiescy</span>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handlePreviewSound(teamSounds.blue)}
+                          disabled={!soundEnabled}
+                          className="text-xs px-2 py-1"
+                        >
+                          <Play className="w-3 h-3 mr-1" />
+                          Test
+                        </Button>
+                      </div>
+                      <select
+                        value={teamSounds.blue}
+                        onChange={(e) => handleTeamSoundChange("blue", e.target.value)}
+                        className="w-full p-2 border rounded text-sm"
+                      >
+                        {getAllAvailableSounds()
+                          .filter((sound) => sound.id !== "none")
+                          .map((sound) => (
+                            <option key={sound.id} value={sound.id}>
+                              {sound.isCustom ? "🎵 " : ""}
+                              {sound.name}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+
+                    <div className="text-xs text-gray-600 bg-gray-50 p-2 rounded">
+                      💡 Te dźwięki będą używane domyślnie dla wszystkich graczy w drużynie, chyba że gracz ma
+                      przypisany specjalny dźwięk.
+                    </div>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handlePreviewSound(TEAM_DEFAULT_SOUNDS.blue)}
-                    disabled={!soundEnabled}
-                    className="text-xs px-2 py-1"
-                  >
-                    <Play className="w-3 h-3 mr-1" />
-                    Test
-                  </Button>
-                </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between p-3 bg-yellow-50 rounded border-l-4 border-yellow-400">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-yellow-700">🟡 Żółci</span>
+                        <span className="text-xs text-gray-600">
+                          ({getAllAvailableSounds().find((s) => s.id === teamSounds.yellow)?.name})
+                        </span>
+                        {getAllAvailableSounds().find((s) => s.id === teamSounds.yellow)?.isCustom && (
+                          <Music className="w-3 h-3 text-blue-500" />
+                        )}
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handlePreviewSound(teamSounds.yellow)}
+                        disabled={!soundEnabled}
+                        className="text-xs px-2 py-1"
+                      >
+                        <Play className="w-3 h-3 mr-1" />
+                        Test
+                      </Button>
+                    </div>
+
+                    <div className="flex items-center justify-between p-3 bg-blue-50 rounded border-l-4 border-blue-500">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-blue-700">🔵 Niebiescy</span>
+                        <span className="text-xs text-gray-600">
+                          ({getAllAvailableSounds().find((s) => s.id === teamSounds.blue)?.name})
+                        </span>
+                        {getAllAvailableSounds().find((s) => s.id === teamSounds.blue)?.isCustom && (
+                          <Music className="w-3 h-3 text-blue-500" />
+                        )}
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handlePreviewSound(teamSounds.blue)}
+                        disabled={!soundEnabled}
+                        className="text-xs px-2 py-1"
+                      >
+                        <Play className="w-3 h-3 mr-1" />
+                        Test
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
