@@ -1,16 +1,5 @@
-const CACHE_NAME = "football-scorer-v2"
-const urlsToCache = [
-  "/",
-  "/offline",
-  "/logos/yellow.png",
-  "/logos/blue.png",
-  "/manifest.json",
-  "/sounds/goal-default.mp3",
-  "/sounds/goal-whistle.mp3",
-  "/sounds/goal-cheer.mp3",
-  "/sounds/goal-horn.mp3",
-  "/sounds/goal-bell.mp3",
-]
+const CACHE_NAME = "football-scorer-v1"
+const urlsToCache = ["/", "/offline", "/logos/yellow.png", "/logos/blue.png", "/manifest.json"]
 
 // Install event - cache resources
 self.addEventListener("install", (event) => {

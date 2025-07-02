@@ -6,11 +6,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
-import { Play, Pause, RotateCcw, Download, Settings, Users, Trophy, Plus, X, Volume2 } from "lucide-react"
+import { Play, Pause, RotateCcw, Download, Settings, Users, Trophy, Plus, X } from "lucide-react"
 import { getPlayers } from "@/lib/actions"
 import InstallPrompt from "./components/install-prompt"
-import { soundManager } from "@/lib/sounds"
-import SoundSettings from "./components/sound-settings"
 
 interface Player {
   id: string
@@ -42,7 +40,6 @@ export default function FootballScorer() {
     open: false,
     team: null,
   })
-  const [soundSettingsOpen, setSoundSettingsOpen] = useState(false)
 
   // Add loading state
   const [playersLoading, setPlayersLoading] = useState(true)
@@ -142,7 +139,7 @@ export default function FootballScorer() {
     }
   }
 
-  const confirmGoal = async (assistantName?: string) => {
+  const confirmGoal = (assistantName?: string) => {
     if (!pendingGoal) return
 
     const action: GameAction = {
@@ -162,14 +159,7 @@ export default function FootballScorer() {
       setBlueScore(blueScore + 1)
     }
 
-    // Play goal sound for the scorer
-    try {
-      await soundManager.playGoalSound(pendingGoal.scorer)
-    } catch (error) {
-      console.warn("Failed to play goal sound:", error)
-    }
-
-    // Update player stats (existing code)
+    // Update player stats
     const updatePlayerStats = (players: Player[], setPlayers: (players: Player[]) => void) => {
       const updatedPlayers = players.map((player) => {
         if (player.name === pendingGoal.scorer) {
@@ -475,7 +465,6 @@ export default function FootballScorer() {
             </DialogContent>
           </Dialog>
         </div>
-        <SoundSettings open={soundSettingsOpen} onOpenChange={setSoundSettingsOpen} />
         <InstallPrompt />
       </>
     )
@@ -557,15 +546,6 @@ export default function FootballScorer() {
               >
                 <Settings className="w-3 h-3 sm:w-4 sm:h-4 mr-1" />
                 KONFIGURACJA
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => setSoundSettingsOpen(true)}
-                size="sm"
-                className="text-xs sm:text-sm px-2 sm:px-3"
-              >
-                <Volume2 className="w-3 h-3 sm:w-4 sm:h-4 mr-1" />
-                DŹWIĘKI
               </Button>
             </div>
 
@@ -773,7 +753,6 @@ export default function FootballScorer() {
           </Dialog>
         </div>
       </div>
-      <SoundSettings open={soundSettingsOpen} onOpenChange={setSoundSettingsOpen} />
       <InstallPrompt />
     </>
   )
